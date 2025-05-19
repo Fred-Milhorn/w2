@@ -1,0 +1,11 @@
+[package]
+name = "w2"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = "1.0.97"
+clap = { version = "4.5.32", features = ["derive"] }
+once_cell = "1.21.1"
+regex = "1.11.1"
+simple-counter = "0.1.0"
