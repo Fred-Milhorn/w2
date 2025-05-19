@@ -8,6 +8,7 @@
 !*/
 
 /target
+/writing-a-c-compiler-tests
 !Makefile
 
 *.o

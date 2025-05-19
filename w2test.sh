@@ -7,5 +7,5 @@ else
     stage="--stage $STAGE"
 fi
 
-cd $HOME/src/writing-a-c-compiler-tests
+cd writing-a-c-compiler-tests
 ./test_compiler $HOME/src/w2/target/debug/w2 --chapter "$chapter" $stage --bitwise --compound
