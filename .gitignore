@@ -11,6 +11,7 @@
 /writing-a-c-compiler-tests
 !Makefile
 
+*.c
 *.o
 *.i
 *.s
