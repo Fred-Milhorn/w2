@@ -15,6 +15,7 @@ pub fn temp_name(prefix: &str) -> String {
     prefix.to_owned() + "." + &Counter::next().to_string()
 }
 
+#[allow(dead_code)]
 pub fn mklabel(prefix: &str, suffix: &str) -> String {
     prefix.to_owned() + "_" + suffix
 }
@@ -34,6 +35,7 @@ pub fn preprocess(file_c: &PathBuf) -> Result<PathBuf> {
 }
 
 /// Assemble the .s file into an executable file.
+#[allow(dead_code)]
 pub fn create_executable(file_s: &PathBuf) -> Result<PathBuf> {
     let file_exe = file_s.with_extension("");
 
@@ -45,6 +47,7 @@ pub fn create_executable(file_s: &PathBuf) -> Result<PathBuf> {
 }
 
 /// Assemble the .s file into an object file.
+#[allow(dead_code)]
 pub fn create_object_file(file_s: &PathBuf) -> Result<PathBuf> {
     let file_o = file_s.with_extension("o");
 

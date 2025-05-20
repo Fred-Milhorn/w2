@@ -354,7 +354,6 @@ fn parse_statement(tokens: &mut TokenStream) -> Result<Statement> {
 	Token::If        => parse_if(tokens)?,
 	_                => {
 	    let expression = parse_expression(tokens, 0)?;
-	    println!("parse_statement: {expression:?}");
 	    tokens.expect(Token::Semicolon)?;
 	    Statement::Expression(expression)
 	}

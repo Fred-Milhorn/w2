@@ -8,4 +8,4 @@ else
 fi
 
 cd writing-a-c-compiler-tests
-./test_compiler $HOME/src/w2/target/debug/w2 --chapter "$chapter" $stage --bitwise --compound
+./test_compiler $HOME/rust/w2/target/debug/w2 --chapter "$chapter" $stage --bitwise --compound

@@ -5,19 +5,17 @@
 use std::collections::HashMap;
 use::anyhow::{Result, anyhow};
 
-#[allow(unused_imports)]
 use crate::parse::{
-    Identifier, Label, Block, Params, FunctionArgs, FunctionDeclarations,
-    UnaryOperator, BinaryOperator, Expression, BlockItem, ForInit,
-    Statement, VariableDeclaration, FunctionDeclaration, Declaration,
-    Ast, TokenStream, 
+    Identifier, Label, Block, UnaryOperator, Expression, BlockItem,
+    ForInit, Statement, VariableDeclaration, FunctionDeclaration,
+    Declaration, Ast,
 };
 use crate::utils::temp_name;
 
 #[derive(Debug, Clone, PartialEq)]
 enum Type {
     Int,
-    FunType(i32),
+    FunType(usize),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -31,7 +29,7 @@ struct TypeMap(HashMap::<Identifier, TypeEntry>);
 
 impl TypeMap {
     fn new() -> Self {
-	Self(HashMap<Identifier, TypeEntry>::new())
+	Self(HashMap::new())
     }
 
     fn get(&self, name: &String) -> Option<TypeEntry> {
@@ -68,7 +66,7 @@ struct IdentMap(HashMap<String, MapEntry>);
 
 impl IdentMap {
     fn new() -> Self {
-	Self(HashMap::<String, MapEntry>::new())
+	Self(HashMap::new())
     }
 
     fn get(&self, name: &String) -> Option<MapEntry> {
@@ -410,20 +408,129 @@ fn label_loops(declaration: &FunctionDeclaration, label: &Option<Label>) -> Resu
     Ok(declaration.clone())
 }
 
-fn typecheck_statement(_statement: &Statement, _type_map: &mut TypeMap) -> Result<()> {
+fn typecheck_for_init(for_init: &ForInit, type_map: &mut TypeMap) -> Result<()> {
+    match for_init {
+	ForInit::InitDecl(declaration)     => typecheck_variable(declaration, type_map)?,
+	ForInit::InitExp(Some(expression)) => typecheck_expression(expression, type_map)?,
+	_ => ()
+    }
+
+    Ok(())
 }
 
-fn typecheck_expression(_expression: &Expression, _type_map: &mut TypeMap) -> Result<()> {
+fn typecheck_statement(statement: &Statement, type_map: &mut TypeMap) -> Result<()> {
+    match statement {
+	Statement::Return(expression) => {
+	    typecheck_expression(expression, type_map)?;
+	},
+	Statement::Expression(expression) => {
+	    typecheck_expression(expression, type_map)?;
+	},
+	Statement::If(expression, then_branch, else_branch) => {
+	    typecheck_expression(expression, type_map)?;
+	    typecheck_statement(then_branch, type_map)?;
+	    if let Some(else_part) = else_branch {
+		typecheck_statement(else_part, type_map)?;
+	    }
+	},
+	Statement::Compound(block) => typecheck_block(block, type_map)?,
+	Statement::While(expression, statement, _) => {
+	    typecheck_expression(expression, type_map)?;
+	    typecheck_statement(statement, type_map)?;
+	},
+	Statement::DoWhile(statement, expression, _) => {
+	    typecheck_statement(statement, type_map)?;
+	    typecheck_expression(expression, type_map)?;
+	},
+	Statement::For(for_init, opt_condition, opt_post, body, _) => {
+	    typecheck_for_init(for_init, type_map)?;
+	    if let Some(condition) = opt_condition {
+		typecheck_expression(condition, type_map)?;
+	    }
+	    if let Some(post) = opt_post {
+		typecheck_expression(post, type_map)?;
+	    }
+	    typecheck_statement(body, type_map)?;
+	}
+	_ => ()
+    }
+    
+    Ok(())
+}
+
+fn typecheck_expression(expression: &Expression, type_map: &mut TypeMap) -> Result<()> {
+    match expression {
+	Expression::FunctionCall(name, opt_args) => {
+	    match type_map.get(name) {
+		Some(entry) => {
+		    match entry.sym_type {
+			Type::Int => return Err(anyhow!("Variable used as function name: {name:?}")),
+			Type::FunType(params_count) => {
+			    let args_count = match opt_args {
+				Some(args) => args.len(),
+				None       => 0,
+			    };
+
+			    if params_count != args_count {
+				return Err(anyhow!("Function called with wrong number of arguments: {name:?}"));
+			    }
+
+			    if let Some(args) = opt_args {
+				for arg in args {
+				    typecheck_expression(arg, type_map)?;
+				}
+			    }
+			}
+		    }
+		},
+		None => return Err(anyhow!("Undefined function call: {name:?}")),
+	    }
+	},
+	Expression::Var(name) => {
+	    match type_map.get(name) {
+		Some(entry) => {
+		    match entry.sym_type {
+			Type::FunType(_) => return Err(anyhow!("Function name used as variable: {name:?}")),
+			_                => ()
+		    }
+		},
+		None => return Err(anyhow!("Undeclared variable in expression: {name:?}")),
+	    }
+	},
+	Expression::Assignment(lvalue, expression) => {
+	    typecheck_expression(lvalue, type_map)?;
+	    typecheck_expression(expression, type_map)?;
+	},
+	Expression::Unary(_, expression) => {
+	    typecheck_expression(expression, type_map)?;
+	},
+	Expression::Binary(_, lhs, rhs) => {
+	    typecheck_expression(lhs, type_map)?;
+	    typecheck_expression(rhs, type_map)?;
+	},
+	Expression::CompoundAssignment(_, lvalue, rhs) => {
+	    typecheck_expression(lvalue, type_map)?;
+	    typecheck_expression(rhs, type_map)?;
+	},
+	Expression::Conditional(condition, then_branch, else_branch) => {
+	    typecheck_expression(condition, type_map)?;
+	    typecheck_expression(then_branch, type_map)?;
+	    typecheck_expression(else_branch, type_map)?;
+	}
+	_ => ()
+    }
+    
+    Ok(())
 }
 
 fn typecheck_block(block: &Block, type_map: &mut TypeMap) -> Result<()> {
     for item in block.iter() {
 	match item {
 	    BlockItem::D(declaration) => match declaration {
-		Declaration::VarDecl(vardecl) => typecheck_variable(vardecl, type_map)?;
-		Declaration::FunDecl(fundecl) => typecheck_function(fundecl, type_map)?;
+		Declaration::VarDecl(vardecl) => typecheck_variable(vardecl, type_map)?,
+		Declaration::FunDecl(fundecl) => typecheck_function(fundecl, type_map)?,
 	    },
-	    BlockItem::S(statement) => typecheck_statement(statement, type_map)?;
+	    BlockItem::S(statement) => typecheck_statement(statement, type_map)?,
 	}
     }
 
@@ -435,7 +542,7 @@ fn typecheck_variable(declaration: &VariableDeclaration, type_map: &mut TypeMap)
 
     type_map.add(name, Type::Int, false);
     if let Some(expression) = init {
-	typecheck_expression(expression, type_map);
+	typecheck_expression(expression, type_map)?;
     }
     
     Ok(())
@@ -451,7 +558,7 @@ fn typecheck_function(declaration: &FunctionDeclaration, type_map: &mut TypeMap)
 
     let mut already_defined = false;
     if let Some(entry) = type_map.get(name) {
-	if entry.symbol_type != function_type {
+	if entry.sym_type != function_type {
 	    return Err(anyhow!("Incompatible function declarations: '{entry:?}'"));
 	}
 	already_defined = entry.defined;
@@ -460,7 +567,7 @@ fn typecheck_function(declaration: &FunctionDeclaration, type_map: &mut TypeMap)
 	}
     }
 
-    type_map.add(name, function_type, already_defined || has_body);
+    type_map.add(name, function_type, already_defined || body.is_some());
 
     if let Some(block) = body {
 	if let Some(params) = parameters {
