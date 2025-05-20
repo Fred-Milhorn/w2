@@ -32,7 +32,7 @@ mod utils;
 mod lex;
 mod parse;
 mod validate;
-//mod tacky;
+mod tacky;
 //mod code;
 
 #[derive(Parser, Debug)]
@@ -96,13 +96,13 @@ fn run(opts: &Opts, file: &PathBuf) -> Result<()> {
 	process::exit(0);
     }
 
-    // let tacky = tacky::generate(validated_ast)?;
-    // if opts.debug {
-    // 	println!("tacky: {:?}\n", tacky);
-    // }
-    // if opts.tacky {
-    // 	process::exit(0);
-    // }
+    let tacky = tacky::generate(&validated_ast)?;
+    if opts.debug {
+	println!("tacky: {:?}\n", tacky);
+    }
+    if opts.tacky {
+	process::exit(0);
+    }
     
     // let code = code::generate(&tacky);
     // if opts.debug {

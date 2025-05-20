@@ -9,6 +9,10 @@ use anyhow::Result;
 
 pub type Identifier = String;
 pub type Instructions = Vec<Instruction>;
+pub type Param = String;
+pub type Params = Vec<Param>;
+pub type Args = Vec<Val>;
+pub type FunctionDefinitions = Vec<FunctionDefinition>;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Val {
@@ -53,40 +57,42 @@ pub enum Instruction {
     JumpIfZero(Val, Identifier),
     JumpIfNotZero(Val, Identifier),
     Label(Identifier),
+    FunCall(Identifier, Option<Args>, Val),
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct Function(pub Identifier, pub Instructions);
+pub struct FunctionDefinition(pub Identifier, pub Option<Params>, pub Instructions);
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Tacky {
-    Program(Function),
+    Program(FunctionDefinitions),
 }
 
-pub fn generate(ast: parse::Ast) -> Result<Tacky> {
-    let tacky = match ast {
-	parse::Ast::Program(function_definition) => Tacky::Program(gen_function(&function_definition)?),
-    };
+pub fn generate(ast: &parse::Ast) -> Result<Tacky> {
+    let parse::Ast::Program(declarations) = ast;
+    let mut definitions: FunctionDefinitions = Vec::new();
 
-    Ok(tacky)
+    for declaration in declarations {
+	match declaration {
+	    parse::FunctionDeclaration(name, params, Some(body)) => {
+		let definition = gen_function(name, params, body)?;
+		definitions.push(definition);
+	    },
+	    _ => ()
+	}
+    }
+
+    Ok(Tacky::Program(definitions))
 }
 
-fn gen_function(function: &parse::Function) -> Result<Function> {
-    let parse::Function(name, body) = function;
-    let mut instructions = gen_statement(body)?;
+fn gen_function(name: &String, params: &Option<Vec<String>>, body: &parse::Block) -> Result<FunctionDefinition> {
+    let mut instructions: Instructions = Vec::new();
+    emit_block(body, &mut instructions)?;
 
     // Patch functions without return
     instructions.push(Instruction::Return(Val::Constant(0)));
     
-    Ok(Function(name.to_string(), instructions))
-}
-
-fn gen_statement(body: &parse::Block) -> Result<Instructions> {
-    let mut instructions: Instructions = Vec::new();
-
-    emit_block(body, &mut instructions)?;
-    
-    Ok(instructions)
+    Ok(FunctionDefinition(name.to_string(), params.clone(), instructions))
 }
 
 fn emit_block(block: &parse::Block, instructions: &mut Instructions) -> Result<()> {
@@ -96,9 +102,14 @@ fn emit_block(block: &parse::Block, instructions: &mut Instructions) -> Result<(
 		emit_statement(statement, instructions)?;
 	    },
 	    parse::BlockItem::D(declaration) => {
-		if let parse::Declaration(identifier, Some(expression)) = declaration {
-		    let value = emit_tacky(expression, instructions)?;
-		    instructions.push(Instruction::Copy(value, Val::Var(identifier.clone())));
+		match declaration {
+		    parse::Declaration::VarDecl(vardecl) => {
+			if let parse::VariableDeclaration(identifier, Some(expression)) = vardecl {
+			    let value = emit_tacky(expression, instructions)?;
+			    instructions.push(Instruction::Copy(value, Val::Var(identifier.clone())));
+			}
+		    },
+		    _ => ()   // Any function declarations have no body at this point.
 		}
 	    },
 	}
@@ -167,7 +178,7 @@ fn emit_statement(statement: &parse::Statement, instructions: &mut Instructions)
 	    let continue_label = mklabel("continue", label);
 	    let break_label    = mklabel("break", label);
 	    match for_init {
-		parse::ForInit::InitDecl(parse::Declaration(identifier, Some(expression))) => {
+		parse::ForInit::InitDecl(parse::VariableDeclaration(identifier, Some(expression))) => {
 		    let value = emit_tacky(expression, instructions)?;
 		    instructions.push(Instruction::Copy(value, Val::Var(identifier.clone())));
 		},
@@ -197,6 +208,25 @@ fn emit_statement(statement: &parse::Statement, instructions: &mut Instructions)
 
 fn emit_tacky(expression: &parse::Expression, instructions: &mut Instructions) -> Result<Val> {
     let value = match expression {
+	parse::Expression::FunctionCall(identifier, args) => {
+	    let arg_exps = match args {
+		Some(arguments) => {
+		    let mut values = Vec::new();
+		    
+		    for argument in arguments {
+			let res = emit_tacky(argument, instructions)?;
+			let val = Val::Var(temp_name("arg"));
+			instructions.push(Instruction::Copy(res, val.clone()));
+			values.push(val);
+		    }
+		    Some(values)
+		},
+		None => None
+	    };
+	    let result = Val::Var(temp_name("result"));
+	    instructions.push(Instruction::FunCall(identifier.to_string(), arg_exps, result.clone()));
+	    result
+	},
 	parse::Expression::Conditional(condition, then_branch, else_branch) => {
 	    let cond_val = emit_tacky(condition, instructions)?;
 	    let else_label = temp_name("else_label");
