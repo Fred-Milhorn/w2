@@ -107,15 +107,9 @@ fn emit_block(block: &parse::Block, instructions: &mut Instructions) -> Result<(
                 emit_statement(statement, instructions)?;
             }
             parse::BlockItem::D(declaration) => {
-                match declaration {
-                    parse::Declaration::VarDecl(vardecl) => {
-                        if let parse::VariableDeclaration(identifier, Some(expression)) = vardecl {
-                            let value = emit_tacky(expression, instructions)?;
-                            instructions
-                                .push(Instruction::Copy(value, Val::Var(identifier.clone())));
-                        }
-                    }
-                    _ => (), // Any function declarations have no body at this point.
+                if let parse::Declaration::VarDecl(parse::VariableDeclaration(identifier, Some(expression))) = declaration {
+                        let value = emit_tacky(expression, instructions)?;
+                        instructions.push(Instruction::Copy(value, Val::Var(identifier.clone())));
                 }
             }
         }

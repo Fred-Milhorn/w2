@@ -35,9 +35,9 @@ impl TypeMap {
         self.0.get(name).cloned()
     }
 
-    fn add(&mut self, name: &String, ident_type: Type, is_defined: bool) -> Option<TypeEntry> {
+    fn add(&mut self, name: &str, ident_type: Type, is_defined: bool) -> Option<TypeEntry> {
         self.0.insert(
-            name.clone(),
+            name.to_owned(),
             TypeEntry {
                 sym_type: ident_type,
                 defined: is_defined,
@@ -54,9 +54,9 @@ struct MapEntry {
 }
 
 impl MapEntry {
-    fn new(name: &String, current: bool, linkage: bool) -> Self {
+    fn new(name: &str, current: bool, linkage: bool) -> Self {
         Self {
-            new_name: name.clone(),
+            new_name: name.to_owned(),
             from_current_scope: current,
             has_linkage: linkage,
         }
@@ -77,13 +77,13 @@ impl IdentMap {
 
     fn add(
         &mut self,
-        name: &String,
+        name: &str,
         new_name: &String,
         from_current_scope: bool,
         has_linkage: bool,
     ) -> Option<MapEntry> {
         self.0.insert(
-            name.clone(),
+            name.to_owned(),
             MapEntry::new(new_name, from_current_scope, has_linkage),
         )
     }

@@ -359,11 +359,7 @@ fn fixup_invalid(body: Instructions) -> Instructions {
                     Operand::Stack(dst_offset),
                 ));
             }
-            Instruction::Binary(
-                operator,
-                Operand::Stack(src_offset),
-                Operand::Stack(dst_offset),
-            ) => {
+            Instruction::Binary(operator, Operand::Stack(src_offset), Operand::Stack(dst_offset)) => {
                 instructions.push(Instruction::Mov(
                     Operand::Stack(src_offset),
                     Operand::Reg(Register::R10),
@@ -442,21 +438,15 @@ fn emit_function(code: &mut String, name: &str, instructions: &Instructions) -> 
 
     for instruction in instructions.iter() {
         match instruction {
-            Instruction::Cmp(src, dst) => {
-                writeln!(code, "\tcmpl\t{}, {}", src.fixup(), dst.fixup())?
-            }
+            Instruction::Cmp(src, dst) => writeln!(code, "\tcmpl\t{}, {}", src.fixup(), dst.fixup())?,
             Instruction::Jmp(label) => writeln!(code, "\tjmp\tL{}", label)?,
             Instruction::Label(label) => writeln!(code, "L{}:", label)?,
             Instruction::JmpCC(cc, label) => writeln!(code, "\tj{}\tL{}", cc.name(), label)?,
-            Instruction::SetCC(cc, dst) => {
-                writeln!(code, "\tset{}\t{}", cc.name(), dst.fixup_1byte())?
-            }
+            Instruction::SetCC(cc, dst) => writeln!(code, "\tset{}\t{}", cc.name(), dst.fixup_1byte())?,
             Instruction::Mov(src, Operand::Reg(Register::CL)) => {
                 writeln!(code, "\tmovb\t{}, %cl", src.fixup())?
             }
-            Instruction::Mov(src, dst) => {
-                writeln!(code, "\tmovl\t{}, {}", src.fixup(), dst.fixup())?
-            }
+            Instruction::Mov(src, dst) => writeln!(code, "\tmovl\t{}, {}", src.fixup(), dst.fixup())?,
             Instruction::Unary(operator, dst) => {
                 let instruction = match operator {
                     UnaryOperator::Neg => "negl",

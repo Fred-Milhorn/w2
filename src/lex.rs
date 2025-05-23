@@ -6,7 +6,7 @@ use regex::Regex;
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum Token {
-    EOT,
+    Eot,
     Identifier(String),
     Constant(i32),
     If,
@@ -271,7 +271,7 @@ pub fn lex(input: &str) -> Result<TokenList> {
         tokens.push(token);
         start += length;
     }
-    tokens.push(Token::EOT);
+    tokens.push(Token::Eot);
 
     Ok(tokens)
 }

@@ -22,7 +22,7 @@ extern crate simple_counter;
 generate_counter!(Counter, usize);
 
 use std::fs;
-use std::path::PathBuf;
+use std::path::{PathBuf, Path};
 use std::process;
 
 use anyhow::Result;
@@ -82,7 +82,7 @@ pub struct Opts {
     pub files: Vec<PathBuf>,
 }
 
-fn run(opts: &Opts, file: &PathBuf) -> Result<()> {
+fn run(opts: &Opts, file: &Path) -> Result<()> {
     // Let's just force our input file to a c source file.
     let file_c = file.with_extension("c");
 

@@ -153,7 +153,7 @@ pub fn parse(token_list: &TokenList) -> Result<Ast> {
     let mut tokens: TokenStream = TokenStream::new(token_list);
     let mut declarations = Vec::<FunctionDeclaration>::new();
 
-    while *tokens.peek()? != Token::EOT {
+    while *tokens.peek()? != Token::Eot {
         let declaration = expect_function_declaration(&mut tokens)?;
         declarations.push(declaration);
     }
@@ -483,6 +483,7 @@ fn parse_conditional_middle(tokens: &mut TokenStream) -> Result<Expression> {
     tokens.expect(Token::QuestionMark)?;
     let middle = parse_expression(tokens, 0)?;
     tokens.expect(Token::Colon)?;
+
     Ok(middle)
 }
 
