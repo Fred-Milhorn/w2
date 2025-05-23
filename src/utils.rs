@@ -6,9 +6,9 @@
 //! Most of these functions are very specific to what's needed by the w2 C compiler,
 //! with run_cli() being an exception.
 
+use anyhow::{anyhow, Context, Result};
 use std::path::PathBuf;
 use std::process::Command;
-use anyhow::{Context, Result, anyhow};
 
 pub fn temp_name(prefix: &str) -> String {
     use crate::Counter;
@@ -28,9 +28,14 @@ pub fn preprocess(file_c: &PathBuf) -> Result<PathBuf> {
     let file_i = file_c.with_extension("i");
 
     let mut preprocess = Command::new("gcc");
-    preprocess.arg("-E").arg("-P").arg(file_c).arg("-o").arg(&file_i);
+    preprocess
+        .arg("-E")
+        .arg("-P")
+        .arg(file_c)
+        .arg("-o")
+        .arg(&file_i);
     run_cli(&mut preprocess)?;
-    
+
     Ok(file_i)
 }
 
@@ -61,22 +66,22 @@ pub fn create_object_file(file_s: &PathBuf) -> Result<PathBuf> {
 /// Run a command line and handle various errors nicely.
 pub fn run_cli(command: &mut Command) -> Result<()> {
     let result = match command.output() {
-	Err(err) => Err(err.into()),
-	Ok(output) => match output.status.code() {
-	    Some(exit_code) => {
-		match exit_code {
-		    0 => Ok(()),
-		    _ => Err(anyhow!("{}non-zero exit code: {exit_code}",
-				     String::from_utf8_lossy(&output.stderr))),
-		}
-	    },
-	    None => { // Apparently, this can happen.
-		Err(anyhow!("Process terminated by signal"))
-	    }
-	}
+        Err(err) => Err(err.into()),
+        Ok(output) => match output.status.code() {
+            Some(exit_code) => match exit_code {
+                0 => Ok(()),
+                _ => Err(anyhow!(
+                    "{}non-zero exit code: {exit_code}",
+                    String::from_utf8_lossy(&output.stderr)
+                )),
+            },
+            None => {
+                // Apparently, this can happen.
+                Err(anyhow!("Process terminated by signal"))
+            }
+        },
     };
 
     // Debug formatter double-quotes all the args! ARGH!
     result.with_context(|| format!("{command:?}").replace("\"", ""))
 }
-
