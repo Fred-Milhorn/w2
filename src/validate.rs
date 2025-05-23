@@ -78,7 +78,7 @@ impl IdentMap {
     fn add(
         &mut self,
         name: &str,
-        new_name: &String,
+        new_name: &str,
         from_current_scope: bool,
         has_linkage: bool,
     ) -> Option<MapEntry> {
