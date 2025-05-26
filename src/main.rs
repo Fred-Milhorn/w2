@@ -22,7 +22,7 @@ extern crate simple_counter;
 generate_counter!(Counter, usize);
 
 use std::fs;
-use std::path::{PathBuf, Path};
+use std::path::{Path, PathBuf};
 use std::process;
 
 use anyhow::Result;
@@ -33,17 +33,12 @@ mod parse;
 mod tacky;
 mod utils;
 mod validate;
-//mod code;
+mod code;
 
 #[derive(Parser, Debug)]
 #[command(version, about = "The w2 tiny C compiler", long_about = None)]
 pub struct Opts {
-    #[arg(
-        short,
-        long,
-        default_value_t = false,
-        help = "Turn on debugging output"
-    )]
+    #[arg(short, long, default_value_t = false, help = "Turn on debugging output")]
     pub debug: bool,
 
     #[arg(long, default_value_t = false, help = "Exit after the lexer")]
@@ -58,25 +53,13 @@ pub struct Opts {
     #[arg(long, default_value_t = false, help = "Exit after generating the IR")]
     pub tacky: bool,
 
-    #[arg(
-        long,
-        default_value_t = false,
-        help = "Exit after generating abstract assembly"
-    )]
+    #[arg(long, default_value_t = false, help = "Exit after generating abstract assembly")]
     pub codegen: bool,
 
-    #[arg(
-        long,
-        default_value_t = false,
-        help = "Exit after generating x64 assembly language"
-    )]
+    #[arg(long, default_value_t = false, help = "Exit after generating x64 assembly language")]
     pub emitcode: bool,
 
-    #[arg(
-        short,
-        default_value_t = false,
-        help = "Just produce an object file (.o)"
-    )]
+    #[arg(short, default_value_t = false, help = "Just produce an object file (.o)")]
     pub compile: bool,
 
     pub files: Vec<PathBuf>,
@@ -121,30 +104,30 @@ fn run(opts: &Opts, file: &Path) -> Result<()> {
         process::exit(0);
     }
 
-    // let code = code::generate(&tacky);
-    // if opts.debug {
-    // 	println!("code: {:?}\n", code);
-    // }
-    // if opts.codegen {
-    // 	process::exit(0);
-    // }
+    let code = code::generate(&tacky);
+    if opts.debug {
+	println!("code: {:?}\n", code);
+    }
+    if opts.codegen {
+	process::exit(0);
+    }
 
-    // let assembly = code::emit(&code)?;
-    // if opts.debug {
-    // 	println!("assembly: {assembly}\n");
-    // }
-    // if opts.emitcode {
-    // 	process::exit(0);
-    // }
+    let assembly = code::emit(&code)?;
+    if opts.debug {
+	println!("assembly: {assembly}\n");
+    }
+    if opts.emitcode {
+	process::exit(0);
+    }
 
-    // let file_s = file_i.with_extension("s");
-    // fs::write(&file_s, &assembly)?;
+    let file_s = file_i.with_extension("s");
+    fs::write(&file_s, &assembly)?;
 
-    // if opts.compile {
-    // 	utils::create_object_file(&file_s)?;
-    // } else {
-    // 	utils::create_executable(&file_s)?;
-    // }
+    if opts.compile {
+	utils::create_object_file(&file_s)?;
+    } else {
+	utils::create_executable(&file_s)?;
+    }
 
     Ok(())
 }

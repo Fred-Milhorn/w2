@@ -165,10 +165,8 @@ pub fn lex(input: &str) -> Result<TokenList> {
     static RE_IDENTIFIER: Lazy<Regex> = Lazy::new(|| Regex::new(r"^[a-zA-Z_]\w*\b").unwrap());
     static RE_CONSTANT: Lazy<Regex> = Lazy::new(|| Regex::new(r"^[0-9]+\b").unwrap());
     static RE_SEPARATORS: Lazy<Regex> = Lazy::new(|| Regex::new(r"^[\,\{\}\(\)\;\?\:]").unwrap());
-    static RE_OPERATORS1: Lazy<Regex> =
-        Lazy::new(|| Regex::new(r"^\+=|^\-=|^\*=|^/=|^\%=|^\&=|^\|=|^\^=|^<<=|^>>=").unwrap());
-    static RE_OPERATORS2: Lazy<Regex> =
-        Lazy::new(|| Regex::new(r"^\-\-|^\+\+|^&&|^<<|^>>|^\|\||^==|^!=|^<=|^>=").unwrap());
+    static RE_OPERATORS1: Lazy<Regex> = Lazy::new(|| Regex::new(r"^\+=|^\-=|^\*=|^/=|^\%=|^\&=|^\|=|^\^=|^<<=|^>>=").unwrap());
+    static RE_OPERATORS2: Lazy<Regex> = Lazy::new(|| Regex::new(r"^\-\-|^\+\+|^&&|^<<|^>>|^\|\||^==|^!=|^<=|^>=").unwrap());
     static RE_OPERATORS3: Lazy<Regex> = Lazy::new(|| Regex::new(r"^[=!\-~+*/%|&^><]").unwrap());
 
     let mut tokens: TokenList = Vec::new();

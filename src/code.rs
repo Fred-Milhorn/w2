@@ -9,15 +9,40 @@ use std::fmt::Write as _;
 
 pub type Identifier = String;
 pub type Instructions = Vec<Instruction>;
+pub type FunctionDefinitions = Vec<Function>;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Register {
-    AX,
-    CL,
+    AX = 0,
+    CX,
     DX,
+    DI,
+    SI,
+    R8,
+    R9,
     R10,
     R11,
 }
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ByteSize {
+    B1 = 0, // 1 byte 
+    B4,     // 4 bytes
+    B8      // 8 bytes
+}
+
+const REGNAME: [[&str; 3]; 9] = [
+    // B1       B4       B8
+    ["%al",   "%eax",  "%rax"],
+    ["%dl",   "%edx",  "%rdx"],
+    ["%cl",   "%ecx",  "%rcx"],
+    ["%dil",  "%edi",  "%rdi"],
+    ["%sil",  "%esi",  "%rsi"],
+    ["%r8b",  "%r8d",  "%r8" ],
+    ["%r9b",  "%r9d",  "%r9" ],
+    ["%r10b", "%r10d", "%r10" ],
+    ["%r11b", "%r11d", "%r11" ],
+];
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Operand {
@@ -68,6 +93,9 @@ pub enum Instruction {
     SetCC(ConditionCode, Operand),
     Label(Identifier),
     AllocateStack(i32),
+    DeallocateStack(i32),
+    Push(Operand),
+    Call(Identifier),
     Ret,
 }
 
@@ -76,32 +104,15 @@ pub struct Function(Identifier, Instructions);
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Assembly {
-    Program(Function),
-}
-
-pub fn generate(ast: &tacky::Tacky) -> Assembly {
-    let tacky::Tacky::Program(function_definition) = ast;
-    let tacky::Function(name, instructions) = function_definition;
-
-    // Turn Tacky instructions in to assembly instructions
-    let mut assembly = gen_assembly(instructions);
-
-    // Turn Pseudo(tmp.%d) place holders into Stack(offsets)
-    // Add AllocateStack instruction as well.
-    assembly = fixup_pseudo(assembly);
-
-    // Fix up invalid instructions that have addresses in src and dst
-    assembly = fixup_invalid(assembly);
-
-    Assembly::Program(Function(name.to_string(), assembly))
+    Program(FunctionDefinitions),
 }
 
 impl tacky::UnaryOperator {
     fn convert(&self) -> UnaryOperator {
         match self {
             tacky::UnaryOperator::Complement => UnaryOperator::Not,
-            tacky::UnaryOperator::Negate => UnaryOperator::Neg,
-            tacky::UnaryOperator::Not => UnaryOperator::Not,
+            tacky::UnaryOperator::Negate     => UnaryOperator::Neg,
+            tacky::UnaryOperator::Not        => UnaryOperator::Not,
         }
     }
 }
@@ -109,14 +120,14 @@ impl tacky::UnaryOperator {
 impl tacky::BinaryOperator {
     fn convert(&self) -> BinaryOperator {
         match self {
-            tacky::BinaryOperator::Add => BinaryOperator::Add,
-            tacky::BinaryOperator::Subtract => BinaryOperator::Sub,
-            tacky::BinaryOperator::Multiply => BinaryOperator::Mult,
+            tacky::BinaryOperator::Add        => BinaryOperator::Add,
+            tacky::BinaryOperator::Subtract   => BinaryOperator::Sub,
+            tacky::BinaryOperator::Multiply   => BinaryOperator::Mult,
             tacky::BinaryOperator::Rightshift => BinaryOperator::Rightshift,
-            tacky::BinaryOperator::Leftshift => BinaryOperator::Leftshift,
-            tacky::BinaryOperator::BitAnd => BinaryOperator::BitAnd,
-            tacky::BinaryOperator::BitXor => BinaryOperator::BitXor,
-            tacky::BinaryOperator::BitOr => BinaryOperator::BitOr,
+            tacky::BinaryOperator::Leftshift  => BinaryOperator::Leftshift,
+            tacky::BinaryOperator::BitAnd     => BinaryOperator::BitAnd,
+            tacky::BinaryOperator::BitXor     => BinaryOperator::BitXor,
+            tacky::BinaryOperator::BitOr      => BinaryOperator::BitOr,
             _ => todo!(),
         }
     }
@@ -126,16 +137,33 @@ impl tacky::Val {
     fn convert(&self) -> Operand {
         match self {
             tacky::Val::Constant(number) => Operand::Imm(*number),
-            tacky::Val::Var(identifier) => Operand::Pseudo(identifier.to_string()),
+            tacky::Val::Var(identifier)  => Operand::Pseudo(identifier.to_string()),
         }
     }
+}
+
+pub fn generate(ast: &tacky::Tacky) -> Assembly {
+    let tacky::Tacky::Program(definitions) = ast;
+    let mut functions: FunctionDefinitions = Vec::new();
+
+    for definition in definitions {
+	let tacky::FunctionDefinition(name, _params, instructions) = definition;
+	let mut assembly = gen_assembly(instructions);
+	assembly = fixup_pseudo(assembly);
+	assembly = fixup_invalid(assembly);
+
+	functions.push(Function(name.to_string(), assembly));
+    }
+
+    Assembly::Program(functions)
 }
 
 fn gen_assembly(body: &tacky::Instructions) -> Instructions {
     let mut instructions: Instructions = Vec::new();
 
-    for instruction in body.iter() {
+    for instruction in body {
         match instruction {
+            tacky::Instruction::FunCall(_, _, _) => todo!(),
             tacky::Instruction::Return(val) => {
                 instructions.push(Instruction::Mov(val.convert(), Operand::Reg(Register::AX)));
                 instructions.push(Instruction::Ret);
@@ -245,26 +273,26 @@ fn fixup_pseudo(body: Instructions) -> Instructions {
         }
     };
 
-    for instruction in body.into_iter() {
+    for instruction in body {
         match instruction {
             Instruction::Mov(src, dst) => {
                 instructions.push(Instruction::Mov(fixup(src), fixup(dst)));
-            }
+            },
             Instruction::Unary(op, dst) => {
                 instructions.push(Instruction::Unary(op, fixup(dst)));
-            }
+            },
             Instruction::Binary(op, src, dst) => {
                 instructions.push(Instruction::Binary(op, fixup(src), fixup(dst)));
-            }
+            },
             Instruction::Idiv(src) => {
                 instructions.push(Instruction::Idiv(fixup(src)));
-            }
+            },
             Instruction::Cmp(src1, src2) => {
                 instructions.push(Instruction::Cmp(fixup(src1), fixup(src2)));
-            }
+            },
             Instruction::SetCC(op, dst) => {
                 instructions.push(Instruction::SetCC(op, fixup(dst)));
-            }
+            },
             _ => instructions.push(instruction),
         }
     }
@@ -329,37 +357,32 @@ fn fixup_invalid(body: Instructions) -> Instructions {
                     Operand::Stack(dst_offset),
                 ));
             }
-            Instruction::Binary(
-                BinaryOperator::Leftshift,
-                Operand::Stack(src_offset),
-                Operand::Stack(dst_offset),
-            ) => {
+            Instruction::Binary(BinaryOperator::Leftshift,
+				Operand::Stack(src_offset), Operand::Stack(dst_offset)) => {
                 instructions.push(Instruction::Mov(
                     Operand::Stack(src_offset),
-                    Operand::Reg(Register::CL),
+                    Operand::Reg(Register::CX),
                 ));
                 instructions.push(Instruction::Binary(
                     BinaryOperator::Leftshift,
-                    Operand::Reg(Register::CL),
+                    Operand::Reg(Register::CX),
                     Operand::Stack(dst_offset),
                 ));
             }
-            Instruction::Binary(
-                BinaryOperator::Rightshift,
-                Operand::Stack(src_offset),
-                Operand::Stack(dst_offset),
-            ) => {
+            Instruction::Binary(BinaryOperator::Rightshift,
+				Operand::Stack(src_offset), Operand::Stack(dst_offset)) => {
                 instructions.push(Instruction::Mov(
                     Operand::Stack(src_offset),
-                    Operand::Reg(Register::CL),
+                    Operand::Reg(Register::CX),
                 ));
                 instructions.push(Instruction::Binary(
                     BinaryOperator::Rightshift,
-                    Operand::Reg(Register::CL),
+                    Operand::Reg(Register::CX),
                     Operand::Stack(dst_offset),
                 ));
             }
-            Instruction::Binary(operator, Operand::Stack(src_offset), Operand::Stack(dst_offset)) => {
+            Instruction::Binary(operator,
+				Operand::Stack(src_offset), Operand::Stack(dst_offset)) => {
                 instructions.push(Instruction::Mov(
                     Operand::Stack(src_offset),
                     Operand::Reg(Register::R10),
@@ -379,103 +402,110 @@ fn fixup_invalid(body: Instructions) -> Instructions {
 
 pub fn emit(assembly: &Assembly) -> Result<String> {
     let mut code = String::new();
-    let Assembly::Program(Function(name, instructions)) = assembly;
     let preamble = "\t.section\t__TEXT,__text,regular,pure_instructions\n\t.build_version macos, 15, 0\tsdk_version 15, 2\n";
 
-    write!(&mut code, "{preamble}")?;
-    emit_function(&mut code, name, instructions)?;
+    writeln!(&mut code, "{preamble}")?;
+
+    let Assembly::Program(functions) = assembly;
+    for function in functions {
+	emit_function(&mut code, function)?;
+    }
 
     Ok(code)
 }
 
 impl Operand {
-    fn fixup(&self) -> String {
+    fn fixup(&self, size: ByteSize) -> String {
         match self {
-            Operand::Reg(Register::AX) => "%eax".to_string(),
-            Operand::Reg(Register::CL) => "%cl".to_string(),
-            Operand::Reg(Register::DX) => "%edx".to_string(),
-            Operand::Reg(Register::R10) => "%r10d".to_string(),
-            Operand::Reg(Register::R11) => "%r11d".to_string(),
+            Operand::Reg(register) => {
+		REGNAME[*register as usize][size as usize].to_string()
+	    },
             Operand::Stack(number) => format!("{number}(%rbp)"),
-            Operand::Imm(number) => format!("${number}"),
-            Operand::Pseudo(_) => panic!(),
+            Operand::Imm(number)   => format!("${number}"),
+            Operand::Pseudo(_)     => panic!(),
         }
     }
 
-    fn fixup_1byte(&self) -> String {
-        match self {
-            Operand::Reg(Register::AX) => "%al".to_string(),
-            Operand::Reg(Register::CL) => "%cl".to_string(),
-            Operand::Reg(Register::DX) => "%dl".to_string(),
-            Operand::Reg(Register::R10) => "%r10b".to_string(),
-            Operand::Reg(Register::R11) => "%r11b".to_string(),
-            Operand::Stack(number) => format!("{number}(%rbp)"),
-            Operand::Imm(number) => format!("${number}"),
-            Operand::Pseudo(_) => panic!(),
-        }
+    fn r1b(&self) -> String {
+	self.fixup(ByteSize::B1)
+    }
+
+    fn r4b(&self) -> String {
+	self.fixup(ByteSize::B4)
+    }
+
+    #[allow(dead_code)]
+    fn r8b(&self) -> String {
+	self.fixup(ByteSize::B8)
     }
 }
 
 impl ConditionCode {
     fn name(&self) -> &str {
         match self {
-            ConditionCode::E => "e",
+            ConditionCode::E  => "e",
             ConditionCode::NE => "ne",
-            ConditionCode::G => "g",
+            ConditionCode::G  => "g",
             ConditionCode::GE => "ge",
-            ConditionCode::L => "l",
+            ConditionCode::L  => "l",
             ConditionCode::LE => "le",
         }
     }
 }
 
-fn emit_function(code: &mut String, name: &str, instructions: &Instructions) -> Result<()> {
-    // Function prologue. Yes, this is ugly.
-    writeln!(
-        code,
-        "\t.global\t_{name}\n_{name}:\n\tpushq\t%rbp\n\tmovq\t%rsp, %rbp"
-    )?;
-
-    for instruction in instructions.iter() {
-        match instruction {
-            Instruction::Cmp(src, dst) => writeln!(code, "\tcmpl\t{}, {}", src.fixup(), dst.fixup())?,
-            Instruction::Jmp(label) => writeln!(code, "\tjmp\tL{}", label)?,
-            Instruction::Label(label) => writeln!(code, "L{}:", label)?,
-            Instruction::JmpCC(cc, label) => writeln!(code, "\tj{}\tL{}", cc.name(), label)?,
-            Instruction::SetCC(cc, dst) => writeln!(code, "\tset{}\t{}", cc.name(), dst.fixup_1byte())?,
-            Instruction::Mov(src, Operand::Reg(Register::CL)) => {
-                writeln!(code, "\tmovb\t{}, %cl", src.fixup())?
-            }
-            Instruction::Mov(src, dst) => writeln!(code, "\tmovl\t{}, {}", src.fixup(), dst.fixup())?,
-            Instruction::Unary(operator, dst) => {
-                let instruction = match operator {
-                    UnaryOperator::Neg => "negl",
-                    UnaryOperator::Not => "notl",
-                };
-                writeln!(code, "\t{}\t{}", instruction, dst.fixup())?;
-            }
-            Instruction::AllocateStack(number) => writeln!(code, "\tsubq\t${number}, %rsp")?,
-            Instruction::Ret => writeln!(code, "\tmovq\t%rbp, %rsp\n\tpopq\t%rbp\n\tret")?,
-            Instruction::Cdq => {
-                writeln!(code, "\tcdq")?;
-            }
-            Instruction::Idiv(dst) => {
-                writeln!(code, "\tidivl\t{}", dst.fixup())?;
-            }
-            Instruction::Binary(operator, src, dst) => {
-                let instruction = match operator {
-                    BinaryOperator::Add => "addl",
-                    BinaryOperator::Sub => "subl",
-                    BinaryOperator::Mult => "imull",
-                    BinaryOperator::Leftshift => "sall",
-                    BinaryOperator::Rightshift => "sarl",
-                    BinaryOperator::BitAnd => "andl",
-                    BinaryOperator::BitXor => "xorl",
-                    BinaryOperator::BitOr => "orl",
-                };
-                writeln!(code, "\t{}\t{}, {}", instruction, src.fixup(), dst.fixup())?;
-            }
+impl UnaryOperator {
+    fn name(&self) -> &str {
+        match self {
+            UnaryOperator::Neg => "negl",
+            UnaryOperator::Not => "notl",
         }
+    }
+}
+
+impl BinaryOperator {
+    fn name(&self) -> &str {
+        match self {
+            BinaryOperator::Add        => "addl",
+            BinaryOperator::Sub        => "subl",
+            BinaryOperator::Mult       => "imull",
+            BinaryOperator::Leftshift  => "sall",
+            BinaryOperator::Rightshift => "sarl",
+            BinaryOperator::BitAnd     => "andl",
+            BinaryOperator::BitXor     => "xorl",
+            BinaryOperator::BitOr      => "orl",
+        }
+    }
+}
+
+fn emit_instruction(code: &mut String, instruction: &Instruction) -> Result<()> {
+    match instruction {
+	Instruction::DeallocateStack(number)    => writeln!(code, "\taddq\t{number}, %rsp")?,
+	Instruction::Push(src)                  => writeln!(code, "\tpush\t{}", src.r4b())?,
+	Instruction::Call(name)                 => writeln!(code, "\tcall\t_{name}")?,
+        Instruction::Cmp(src, dst)              => writeln!(code, "\tcmpl\t{}, {}", src.r4b(), dst.r4b())?,
+        Instruction::Jmp(label)                 => writeln!(code, "\tjmp\tL{}", label)?,
+        Instruction::Label(label)               => writeln!(code, "L{}:", label)?,
+        Instruction::JmpCC(cc, label)           => writeln!(code, "\tj{}\tL{}", cc.name(), label)?,
+        Instruction::SetCC(cc, dst)             => writeln!(code, "\tset{}\t{}", cc.name(), dst.r1b())?,
+        Instruction::Mov(src, dst)              => writeln!(code, "\tmovl\t{}, {}", src.r4b(), dst.r4b())?,
+        Instruction::Unary(operator, dst)       => writeln!(code, "\t{}\t{}", operator.name(), dst.r4b())?,
+        Instruction::AllocateStack(number)      => writeln!(code, "\tsubq\t${number}, %rsp")?,
+        Instruction::Ret                        => writeln!(code, "\tmovq\t%rbp, %rsp\n\tpopq\t%rbp\n\tret")?,
+        Instruction::Cdq                        => writeln!(code, "\tcdq")?,
+        Instruction::Idiv(dst)                  => writeln!(code, "\tidivl\t{}", dst.r4b())?,
+        Instruction::Binary(operator, src, dst) => writeln!(code, "\t{}\t{}, {}", operator.name(), src.r4b(), dst.r4b())?,
+    }
+
+    Ok(())
+}
+
+fn emit_function(code: &mut String, function: &Function) -> Result<()> {
+    let Function(name, instructions) = function;
+
+    writeln!(code, "\t.global\t_{name}\n_{name}:\n\tpushq\t%rbp\n\tmovq\t%rsp, %rbp")?;
+
+    for instruction in instructions {
+	emit_instruction(code, instruction)?;
     }
 
     Ok(())

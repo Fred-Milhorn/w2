@@ -6,8 +6,8 @@ use anyhow::{anyhow, Result};
 use std::collections::HashMap;
 
 use crate::parse::{
-    Ast, Block, BlockItem, Declaration, Expression, ForInit, FunctionDeclaration, Identifier,
-    Label, Statement, UnaryOperator, VariableDeclaration,
+    Ast, Block, BlockItem, Declaration, Expression, ForInit, FunctionDeclaration, Identifier, Label, Statement, UnaryOperator,
+    VariableDeclaration,
 };
 use crate::utils::temp_name;
 
@@ -75,17 +75,9 @@ impl IdentMap {
         self.0.get(name).cloned()
     }
 
-    fn add(
-        &mut self,
-        name: &str,
-        new_name: &str,
-        from_current_scope: bool,
-        has_linkage: bool,
-    ) -> Option<MapEntry> {
-        self.0.insert(
-            name.to_owned(),
-            MapEntry::new(new_name, from_current_scope, has_linkage),
-        )
+    fn add(&mut self, name: &str, new_name: &str, from_current_scope: bool, has_linkage: bool) -> Option<MapEntry> {
+        self.0
+            .insert(name.to_owned(), MapEntry::new(new_name, from_current_scope, has_linkage))
     }
 
     fn duplicate(&self) -> IdentMap {
@@ -115,7 +107,7 @@ pub fn validate(mut ast: Ast) -> Result<Ast> {
     }
 
     // Typecheck all declarations, definitions, and variables
-    for declaration in declarations.iter() {
+    for declaration in declarations {
         typecheck_function(declaration, &mut type_map)?;
     }
 
@@ -137,17 +129,12 @@ fn resolve_parameter(parameter: &Identifier, ident_map: &mut IdentMap) -> Result
     Ok(unique_name)
 }
 
-fn resolve_function(
-    declaration: &FunctionDeclaration,
-    ident_map: &mut IdentMap,
-) -> Result<FunctionDeclaration> {
+fn resolve_function(declaration: &FunctionDeclaration, ident_map: &mut IdentMap) -> Result<FunctionDeclaration> {
     let FunctionDeclaration(name, opt_params, opt_body) = declaration;
 
     if let Some(entry) = ident_map.get(name) {
         if entry.from_current_scope && !entry.has_linkage {
-            return Err(anyhow!(
-                "resolve_function: duplicate function declaration: '{name}'"
-            ));
+            return Err(anyhow!("resolve_function: duplicate function declaration: '{name}'"));
         }
     }
 
@@ -157,7 +144,7 @@ fn resolve_function(
     let new_params = match opt_params {
         Some(params) => {
             let mut resolved_params = Vec::<Identifier>::new();
-            for param in params.iter() {
+            for param in params {
                 let resolved_param = resolve_parameter(param, &mut inner_map)?;
                 resolved_params.push(resolved_param);
             }
@@ -176,20 +163,16 @@ fn resolve_function(
 fn resolve_block(block: &Block, ident_map: &mut IdentMap) -> Result<Block> {
     let mut new_block = Vec::<BlockItem>::new();
 
-    for item in block.iter() {
+    for item in block {
         let new_item = match item {
             BlockItem::D(declaration) => BlockItem::D(match declaration {
                 Declaration::FunDecl(fundecl) => match fundecl {
                     FunctionDeclaration(name, _, Some(_)) => {
-                        return Err(anyhow!(
-                            "resolve_block: nested function definitions not allowed: {name:?}"
-                        ));
+                        return Err(anyhow!("resolve_block: nested function definitions not allowed: {name:?}"));
                     }
                     _ => Declaration::FunDecl(resolve_function(fundecl, ident_map)?),
                 },
-                Declaration::VarDecl(vardecl) => {
-                    Declaration::VarDecl(resolve_variable(vardecl, ident_map)?)
-                }
+                Declaration::VarDecl(vardecl) => Declaration::VarDecl(resolve_variable(vardecl, ident_map)?),
             }),
             BlockItem::S(statement) => BlockItem::S(resolve_statement(statement, ident_map)?),
         };
@@ -199,17 +182,12 @@ fn resolve_block(block: &Block, ident_map: &mut IdentMap) -> Result<Block> {
     Ok(new_block)
 }
 
-fn resolve_variable(
-    declaration: &VariableDeclaration,
-    ident_map: &mut IdentMap,
-) -> Result<VariableDeclaration> {
+fn resolve_variable(declaration: &VariableDeclaration, ident_map: &mut IdentMap) -> Result<VariableDeclaration> {
     let VariableDeclaration(name, init) = declaration;
 
     if let Some(entry) = ident_map.get(name) {
         if entry.from_current_scope {
-            return Err(anyhow!(
-                "resolve_declaration: duplicate declaration of variable '{name}'"
-            ));
+            return Err(anyhow!("resolve_declaration: duplicate declaration of variable '{name}'"));
         }
     }
 
@@ -226,12 +204,8 @@ fn resolve_variable(
 
 fn resolve_statement(statement: &Statement, ident_map: &IdentMap) -> Result<Statement> {
     let new_statement = match statement {
-        Statement::Return(expression) => {
-            Statement::Return(resolve_expression(expression, ident_map)?)
-        }
-        Statement::Expression(expression) => {
-            Statement::Expression(resolve_expression(expression, ident_map)?)
-        }
+        Statement::Return(expression) => Statement::Return(resolve_expression(expression, ident_map)?),
+        Statement::Expression(expression) => Statement::Expression(resolve_expression(expression, ident_map)?),
         Statement::If(condition, then_part, else_part) => {
             let resolved_condition = resolve_expression(condition, ident_map)?;
             let resolved_then = Box::new(resolve_statement(then_part, ident_map)?);
@@ -277,10 +251,7 @@ fn resolve_statement(statement: &Statement, ident_map: &IdentMap) -> Result<Stat
     Ok(new_statement)
 }
 
-fn resolve_optional_expression(
-    optional_expression: &Option<Expression>,
-    ident_map: &IdentMap,
-) -> Result<Option<Expression>> {
+fn resolve_optional_expression(optional_expression: &Option<Expression>, ident_map: &IdentMap) -> Result<Option<Expression>> {
     let resolved_expression = match optional_expression {
         Some(expression) => Some(resolve_expression(expression, ident_map)?),
         None => None,
@@ -291,12 +262,8 @@ fn resolve_optional_expression(
 
 fn resolve_for_init(for_init: &ForInit, ident_map: &mut IdentMap) -> Result<ForInit> {
     let resolved_for_init = match for_init {
-        ForInit::InitDecl(declaration) => {
-            ForInit::InitDecl(resolve_variable(declaration, ident_map)?)
-        }
-        ForInit::InitExp(expression) => {
-            ForInit::InitExp(resolve_optional_expression(expression, ident_map)?)
-        }
+        ForInit::InitDecl(declaration) => ForInit::InitDecl(resolve_variable(declaration, ident_map)?),
+        ForInit::InitExp(expression) => ForInit::InitExp(resolve_optional_expression(expression, ident_map)?),
     };
 
     Ok(resolved_for_init)
@@ -360,7 +327,7 @@ fn resolve_expression(expression: &Expression, ident_map: &IdentMap) -> Result<E
                 let new_args = match opt_args {
                     Some(args) => {
                         let mut resolved_args = Vec::<Expression>::new();
-                        for arg in args.iter() {
+                        for arg in args {
                             let resolved_arg = resolve_expression(arg, ident_map)?;
                             resolved_args.push(resolved_arg);
                         }
@@ -371,11 +338,7 @@ fn resolve_expression(expression: &Expression, ident_map: &IdentMap) -> Result<E
 
                 Expression::FunctionCall(new_name, new_args)
             }
-            None => {
-                return Err(anyhow!(
-                    "resolve_expression: undeclarated function '{name}'"
-                ))
-            }
+            None => return Err(anyhow!("resolve_expression: undeclarated function '{name}'")),
         },
         _ => expression.clone(),
     };
@@ -432,7 +395,7 @@ fn label_statement(statement: &Statement, label: &Option<Label>) -> Result<State
 fn label_block(block: &Block, label: &Option<Label>) -> Result<Block> {
     let mut new_block = Vec::<BlockItem>::new();
 
-    for item in block.iter() {
+    for item in block {
         match item {
             BlockItem::D(_) => {
                 new_block.push(item.clone());
@@ -447,17 +410,10 @@ fn label_block(block: &Block, label: &Option<Label>) -> Result<Block> {
     Ok(new_block)
 }
 
-fn label_loops(
-    declaration: &FunctionDeclaration,
-    label: &Option<Label>,
-) -> Result<FunctionDeclaration> {
+fn label_loops(declaration: &FunctionDeclaration, label: &Option<Label>) -> Result<FunctionDeclaration> {
     if let FunctionDeclaration(name, opt_params, Some(body)) = declaration {
         let new_body = label_block(body, label)?;
-        return Ok(FunctionDeclaration(
-            name.clone(),
-            opt_params.clone(),
-            Some(new_body),
-        ));
+        return Ok(FunctionDeclaration(name.clone(), opt_params.clone(), Some(new_body)));
     }
 
     Ok(declaration.clone())
@@ -525,9 +481,7 @@ fn typecheck_expression(expression: &Expression, type_map: &mut TypeMap) -> Resu
                     };
 
                     if params_count != args_count {
-                        return Err(anyhow!(
-                            "Function called with wrong number of arguments: {name:?}"
-                        ));
+                        return Err(anyhow!("Function called with wrong number of arguments: {name:?}"));
                     }
 
                     if let Some(args) = opt_args {
@@ -574,7 +528,7 @@ fn typecheck_expression(expression: &Expression, type_map: &mut TypeMap) -> Resu
 }
 
 fn typecheck_block(block: &Block, type_map: &mut TypeMap) -> Result<()> {
-    for item in block.iter() {
+    for item in block {
         match item {
             BlockItem::D(declaration) => match declaration {
                 Declaration::VarDecl(vardecl) => typecheck_variable(vardecl, type_map)?,
@@ -621,7 +575,7 @@ fn typecheck_function(declaration: &FunctionDeclaration, type_map: &mut TypeMap)
 
     if let Some(block) = body {
         if let Some(params) = parameters {
-            for param in params.iter() {
+            for param in params {
                 type_map.add(param, Type::Int, false);
             }
         }

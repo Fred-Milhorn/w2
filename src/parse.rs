@@ -84,13 +84,7 @@ pub enum Statement {
     Continue(Label),
     While(Expression, Box<Statement>, Label),
     DoWhile(Box<Statement>, Expression, Label),
-    For(
-        ForInit,
-        Option<Expression>,
-        Option<Expression>,
-        Box<Statement>,
-        Label,
-    ),
+    For(ForInit, Option<Expression>, Option<Expression>, Box<Statement>, Label),
     Null,
 }
 
@@ -140,9 +134,7 @@ impl TokenStream<'_> {
         let token = self.next()?;
 
         if mem::discriminant(token) != mem::discriminant(&expected) {
-            return Err(anyhow!(
-                "Expected token: '{expected:?}', Unexpected token: '{token:?}'"
-            ));
+            return Err(anyhow!("Expected token: '{expected:?}', Unexpected token: '{token:?}'"));
         }
 
         Ok(token)
@@ -164,11 +156,7 @@ pub fn parse(token_list: &TokenList) -> Result<Ast> {
 fn expect_function_declaration(tokens: &mut TokenStream) -> Result<FunctionDeclaration> {
     let declaration = match parse_declaration(tokens)? {
         Declaration::FunDecl(declaration) => declaration.clone(),
-        Declaration::VarDecl(vardecl) => {
-            return Err(anyhow!(
-                "parse: unexpected variable declaration: '{vardecl:?}'"
-            ))
-        }
+        Declaration::VarDecl(vardecl) => return Err(anyhow!("parse: unexpected variable declaration: '{vardecl:?}'")),
     };
 
     Ok(declaration)
@@ -177,20 +165,13 @@ fn expect_function_declaration(tokens: &mut TokenStream) -> Result<FunctionDecla
 fn expect_variable_declaration(tokens: &mut TokenStream) -> Result<VariableDeclaration> {
     let declaration = match parse_declaration(tokens)? {
         Declaration::VarDecl(declaration) => declaration.clone(),
-        Declaration::FunDecl(fundecl) => {
-            return Err(anyhow!(
-                "parse: unexpected variable declaration: '{fundecl:?}'"
-            ))
-        }
+        Declaration::FunDecl(fundecl) => return Err(anyhow!("parse: unexpected variable declaration: '{fundecl:?}'")),
     };
 
     Ok(declaration)
 }
 
-fn parse_variable_declaration(
-    tokens: &mut TokenStream,
-    name: String,
-) -> Result<VariableDeclaration> {
+fn parse_variable_declaration(tokens: &mut TokenStream, name: String) -> Result<VariableDeclaration> {
     let expression = match tokens.peek()? {
         Token::Assignment => {
             tokens.next()?;
@@ -200,11 +181,7 @@ fn parse_variable_declaration(
             tokens.next()?;
             None
         }
-        token => {
-            return Err(anyhow!(
-                "parse_variable_declaration: unexpected token: '{token:?}'"
-            ))
-        }
+        token => return Err(anyhow!("parse_variable_declaration: unexpected token: '{token:?}'")),
     };
 
     Ok(VariableDeclaration(name, expression))
@@ -241,11 +218,7 @@ fn parse_parameter_list(tokens: &mut TokenStream) -> Result<Option<Params>> {
                 tokens.expect(Token::CloseParen)?;
                 return Ok(None);
             }
-            token => {
-                return Err(anyhow!(
-                    "parse_parameter_list: unexpected token '{token:?}'"
-                ))
-            }
+            token => return Err(anyhow!("parse_parameter_list: unexpected token '{token:?}'")),
         }
     }
     tokens.expect(Token::CloseParen)?;
@@ -253,10 +226,7 @@ fn parse_parameter_list(tokens: &mut TokenStream) -> Result<Option<Params>> {
     Ok(Some(params))
 }
 
-fn parse_function_declaration(
-    tokens: &mut TokenStream,
-    name: String,
-) -> Result<FunctionDeclaration> {
+fn parse_function_declaration(tokens: &mut TokenStream, name: String) -> Result<FunctionDeclaration> {
     let optional_params = parse_parameter_list(tokens)?;
     let optional_body = match tokens.peek()? {
         Token::Semicolon => {
@@ -264,11 +234,7 @@ fn parse_function_declaration(
             None
         }
         Token::OpenBrace => Some(parse_block(tokens)?),
-        token => {
-            return Err(anyhow!(
-                "parse_function_declaration: unexpected token: '{token:?}'"
-            ))
-        }
+        token => return Err(anyhow!("parse_function_declaration: unexpected token: '{token:?}'")),
     };
 
     Ok(FunctionDeclaration(name, optional_params, optional_body))
@@ -379,13 +345,7 @@ fn parse_statement(tokens: &mut TokenStream) -> Result<Statement> {
             let optional_exp1 = parse_optional_expression(tokens, Token::Semicolon)?;
             let optional_exp2 = parse_optional_expression(tokens, Token::CloseParen)?;
             let statement = parse_statement(tokens)?;
-            Statement::For(
-                for_init,
-                optional_exp1,
-                optional_exp2,
-                Box::new(statement),
-                temp_name("for"),
-            )
+            Statement::For(for_init, optional_exp1, optional_exp2, Box::new(statement), temp_name("for"))
         }
         Token::Semicolon => parse_null(tokens)?,
         Token::Return => parse_return(tokens)?,
@@ -400,10 +360,7 @@ fn parse_statement(tokens: &mut TokenStream) -> Result<Statement> {
     Ok(statement)
 }
 
-fn parse_optional_expression(
-    tokens: &mut TokenStream,
-    expected: Token,
-) -> Result<Option<Expression>> {
+fn parse_optional_expression(tokens: &mut TokenStream, expected: Token) -> Result<Option<Expression>> {
     let optional_expression = {
         if *tokens.peek()? == expected {
             tokens.expect(expected)?;
@@ -502,8 +459,7 @@ fn parse_expression(tokens: &mut TokenStream, min_precedence: i32) -> Result<Exp
     let mut left = parse_factor(tokens)?;
     let mut token = tokens.peek()?.clone();
 
-    while (token.is_binary_operator() || token.is_inc_dec()) && token.precedence() >= min_precedence
-    {
+    while (token.is_binary_operator() || token.is_inc_dec()) && token.precedence() >= min_precedence {
         left = if token.is_inc_dec() {
             let operator = parse_inc_dec(tokens)?;
             Expression::Unary(operator, Box::new(left))
@@ -540,9 +496,7 @@ fn parse_function_call(tokens: &mut TokenStream, name: &String) -> Result<Expres
         if *tokens.peek()? == Token::Comma {
             tokens.next()?;
             if *tokens.peek()? == Token::CloseParen {
-                return Err(anyhow!(
-                    "Unexpected trailing comma in function call: {name:?}"
-                ));
+                return Err(anyhow!("Unexpected trailing comma in function call: {name:?}"));
             }
         }
     }

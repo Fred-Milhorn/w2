@@ -28,12 +28,7 @@ pub fn preprocess(file_c: &PathBuf) -> Result<PathBuf> {
     let file_i = file_c.with_extension("i");
 
     let mut preprocess = Command::new("gcc");
-    preprocess
-        .arg("-E")
-        .arg("-P")
-        .arg(file_c)
-        .arg("-o")
-        .arg(&file_i);
+    preprocess.arg("-E").arg("-P").arg(file_c).arg("-o").arg(&file_i);
     run_cli(&mut preprocess)?;
 
     Ok(file_i)

@@ -5,7 +5,7 @@
 use crate::parse;
 use crate::utils::{mklabel, temp_name};
 
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 
 pub type Identifier = String;
 pub type Instructions = Vec<Instruction>;
@@ -82,34 +82,27 @@ pub fn generate(ast: &parse::Ast) -> Result<Tacky> {
     Ok(Tacky::Program(definitions))
 }
 
-fn gen_function(
-    name: &String,
-    params: &Option<Vec<String>>,
-    body: &parse::Block,
-) -> Result<FunctionDefinition> {
+fn gen_function(name: &String, params: &Option<Vec<String>>, body: &parse::Block) -> Result<FunctionDefinition> {
     let mut instructions: Instructions = Vec::new();
     emit_block(body, &mut instructions)?;
 
     // Patch functions without return
     instructions.push(Instruction::Return(Val::Constant(0)));
 
-    Ok(FunctionDefinition(
-        name.to_string(),
-        params.clone(),
-        instructions,
-    ))
+    Ok(FunctionDefinition(name.to_string(), params.clone(), instructions))
 }
 
 fn emit_block(block: &parse::Block, instructions: &mut Instructions) -> Result<()> {
-    for item in block.iter() {
+    for item in block {
         match item {
             parse::BlockItem::S(statement) => {
                 emit_statement(statement, instructions)?;
             }
             parse::BlockItem::D(declaration) => {
-                if let parse::Declaration::VarDecl(parse::VariableDeclaration(identifier, Some(expression))) = declaration {
-                        let value = emit_tacky(expression, instructions)?;
-                        instructions.push(Instruction::Copy(value, Val::Var(identifier.clone())));
+                if let parse::Declaration::VarDecl(
+		    parse::VariableDeclaration(identifier, Some(expression))) = declaration {
+                    let value = emit_tacky(expression, instructions)?;
+                    instructions.push(Instruction::Copy(value, Val::Var(identifier.clone())));
                 }
             }
         }
@@ -178,10 +171,7 @@ fn emit_statement(statement: &parse::Statement, instructions: &mut Instructions)
             let continue_label = mklabel("continue", label);
             let break_label = mklabel("break", label);
             match for_init {
-                parse::ForInit::InitDecl(parse::VariableDeclaration(
-                    identifier,
-                    Some(expression),
-                )) => {
+                parse::ForInit::InitDecl(parse::VariableDeclaration(identifier, Some(expression))) => {
                     let value = emit_tacky(expression, instructions)?;
                     instructions.push(Instruction::Copy(value, Val::Var(identifier.clone())));
                 }
@@ -212,26 +202,22 @@ fn emit_statement(statement: &parse::Statement, instructions: &mut Instructions)
 fn emit_tacky(expression: &parse::Expression, instructions: &mut Instructions) -> Result<Val> {
     let value = match expression {
         parse::Expression::FunctionCall(identifier, args) => {
-            let arg_exps = match args {
-                Some(arguments) => {
+	    let args_exps = match args {
+		Some(arguments) => {
                     let mut values = Vec::new();
 
                     for argument in arguments {
-                        let res = emit_tacky(argument, instructions)?;
-                        let val = Val::Var(temp_name("arg"));
-                        instructions.push(Instruction::Copy(res, val.clone()));
-                        values.push(val);
+			let res = emit_tacky(argument, instructions)?;
+			let val = Val::Var(temp_name("arg"));
+			instructions.push(Instruction::Copy(res, val.clone()));
+			values.push(val);
                     }
-                    Some(values)
-                }
-                None => None,
-            };
+		    Some(values)
+		},
+		None => None,
+	    };
             let result = Val::Var(temp_name("result"));
-            instructions.push(Instruction::FunCall(
-                identifier.to_string(),
-                arg_exps,
-                result.clone(),
-            ));
+            instructions.push(Instruction::FunCall(identifier.to_string(), args_exps, result.clone()));
             result
         }
         parse::Expression::Conditional(condition, then_branch, else_branch) => {
@@ -302,7 +288,7 @@ fn emit_tacky(expression: &parse::Expression, instructions: &mut Instructions) -
                 parse::UnaryOperator::Complement => UnaryOperator::Complement,
                 parse::UnaryOperator::Negate => UnaryOperator::Negate,
                 parse::UnaryOperator::Not => UnaryOperator::Not,
-                _ => todo!(),
+                _ => return Err(anyhow!("Illegal unary operator: {op:?}")),
             };
             instructions.push(Instruction::Unary(tacky_op, src, dst.clone()));
             dst
@@ -358,7 +344,7 @@ fn emit_tacky(expression: &parse::Expression, instructions: &mut Instructions) -
                 parse::BinaryOperator::LessOrEqual => BinaryOperator::LessOrEqual,
                 parse::BinaryOperator::GreaterThan => BinaryOperator::GreaterThan,
                 parse::BinaryOperator::GreaterOrEqual => BinaryOperator::GreaterOrEqual,
-                _ => todo!(),
+                _ => return Err(anyhow!("Illegal binary operator: {op:?}")),
             };
             instructions.push(Instruction::Binary(tacky_op, val1, val2, dst.clone()));
             dst
