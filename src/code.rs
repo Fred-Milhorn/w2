@@ -10,6 +10,7 @@ use std::fmt::Write as _;
 pub type Identifier = String;
 pub type Instructions = Vec<Instruction>;
 pub type FunctionDefinitions = Vec<Function>;
+pub type StackSize = i32;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Register {
@@ -24,6 +25,12 @@ pub enum Register {
     R11,
 }
 
+const STACK_COUNT: usize = 6;            // First 6 arguments go into registers
+static ARG_REGISTERS: [Register; STACK_COUNT] = [
+    Register::DI, Register::SI, Register::DX,
+    Register::CX, Register::R8, Register::R9,
+];
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ByteSize {
     B1 = 0, // 1 byte 
@@ -31,7 +38,9 @@ pub enum ByteSize {
     B8      // 8 bytes
 }
 
-const REGNAME: [[&str; 3]; 9] = [
+const REG_SIZES: usize = 3;
+const REG_COUNT: usize = 9;
+const REGNAME: [[&str; REG_SIZES]; REG_COUNT] = [
     // B1       B4       B8
     ["%al",   "%eax",  "%rax"],
     ["%dl",   "%edx",  "%rdx"],
@@ -100,7 +109,7 @@ pub enum Instruction {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct Function(Identifier, Instructions);
+pub struct Function(Identifier, StackSize, Instructions);
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Assembly {
@@ -146,24 +155,89 @@ pub fn generate(ast: &tacky::Tacky) -> Assembly {
     let tacky::Tacky::Program(definitions) = ast;
     let mut functions: FunctionDefinitions = Vec::new();
 
-    for definition in definitions {
-	let tacky::FunctionDefinition(name, _params, instructions) = definition;
-	let mut assembly = gen_assembly(instructions);
-	assembly = fixup_pseudo(assembly);
-	assembly = fixup_invalid(assembly);
+    for definition in definitions.into_iter() {
+	let mut function = gen_assembly(definition);
+	function = fixup_pseudo(function);
+	function = fixup_invalid(function);
 
-	functions.push(Function(name.to_string(), assembly));
+	functions.push(function);
     }
 
     Assembly::Program(functions)
 }
 
-fn gen_assembly(body: &tacky::Instructions) -> Instructions {
+fn convert_function_call(name: &String, arguments: &Option<tacky::Args>, dst: &tacky::Val, instructions: &mut Instructions) {
+    let mut stack_padding: i32 = 0;  // in bytes
+
+    if let Some(args) = arguments {
+	if (args.len() % 2) == 1 {
+	    stack_padding = 8;
+	    instructions.push(Instruction::AllocateStack(stack_padding));
+	}
+
+	let at_ix = args.len().min(STACK_COUNT);
+	let register_args = &args[0..at_ix];
+	let stack_args = &args[at_ix..];
+
+	for (index, tacky_arg) in register_args.iter().enumerate() {
+	    let register = ARG_REGISTERS[index];
+	    let assembly_arg = tacky_arg.convert();
+	    instructions.push(Instruction::Mov(assembly_arg, Operand::Reg(register)));
+	}
+
+	for tacky_arg in stack_args.iter().rev() {
+	    let assembly_arg = tacky_arg.convert();
+	    match assembly_arg {
+		Operand::Imm(_) |
+		Operand::Reg(_) => {
+		    instructions.push(Instruction::Push(assembly_arg));
+		},
+		_ => {
+		    instructions.push(Instruction::Mov(assembly_arg, Operand::Reg(Register::AX)));
+		    instructions.push(Instruction::Push(Operand::Reg(Register::AX)));
+		}
+	    }
+	}
+	instructions.push(Instruction::Call(name.to_string()));
+
+	let bytes_to_remove: i32 = 8 * (stack_args.len() as i32) + stack_padding;
+	if bytes_to_remove > 0 {
+	    instructions.push(Instruction::DeallocateStack(bytes_to_remove));
+	}
+	
+    } else {
+	instructions.push(Instruction::Call(name.to_string()));
+    }
+
+    instructions.push(Instruction::Mov(Operand::Reg(Register::AX), dst.convert()));
+}
+
+fn gen_assembly(function: &tacky::FunctionDefinition) -> Function {
+    let tacky::FunctionDefinition(name, parameters, body) = function;
     let mut instructions: Instructions = Vec::new();
+
+    if let Some(params) = parameters {
+	let mut ix = 0;
+	while ix < params.len() && ix < STACK_COUNT {
+	    instructions.push(Instruction::Mov(Operand::Reg(ARG_REGISTERS[ix]),
+					       Operand::Pseudo(params[ix].to_string())));
+	    ix += 1;
+	}
+
+	let mut stack_depth = 16;
+	while ix < params.len() {
+	    instructions.push(Instruction::Mov(Operand::Stack(stack_depth),
+					       Operand::Pseudo(params[ix].to_string())));
+	    ix += 1;
+	    stack_depth += 8;
+	}
+    }
 
     for instruction in body {
         match instruction {
-            tacky::Instruction::FunCall(_, _, _) => todo!(),
+            tacky::Instruction::FunCall(name, args, dst) => {
+                convert_function_call(name, args, dst, &mut instructions);
+            }
             tacky::Instruction::Return(val) => {
                 instructions.push(Instruction::Mov(val.convert(), Operand::Reg(Register::AX)));
                 instructions.push(Instruction::Ret);
@@ -247,10 +321,11 @@ fn gen_assembly(body: &tacky::Instructions) -> Instructions {
         }
     }
 
-    instructions
+    Function(name.clone(), 0, instructions)
 }
 
-fn fixup_pseudo(body: Instructions) -> Instructions {
+fn fixup_pseudo(function: Function) -> Function {
+    let Function(name, _, body) = function;
     let mut instructions: Instructions = Vec::new();
     let mut pseudo_map: HashMap<String, i32> = HashMap::new();
     let mut stack_depth: i32 = 0;
@@ -293,6 +368,9 @@ fn fixup_pseudo(body: Instructions) -> Instructions {
             Instruction::SetCC(op, dst) => {
                 instructions.push(Instruction::SetCC(op, fixup(dst)));
             },
+	    Instruction::Push(src) => {
+		instructions.push(Instruction::Push(fixup(src)));
+	    },
             _ => instructions.push(instruction),
         }
     }
@@ -300,10 +378,11 @@ fn fixup_pseudo(body: Instructions) -> Instructions {
     // Now we know that stack depth. insert the stack allocation instruction.
     instructions.insert(0, Instruction::AllocateStack(stack_depth.abs()));
 
-    instructions
+    Function(name.clone(), stack_depth.abs(), instructions)
 }
 
-fn fixup_invalid(body: Instructions) -> Instructions {
+fn fixup_invalid(function: Function) -> Function {
+    let Function(name, stack_size, body) = function;
     let mut instructions: Instructions = Vec::new();
 
     for instruction in body.into_iter() {
@@ -397,7 +476,7 @@ fn fixup_invalid(body: Instructions) -> Instructions {
         }
     }
 
-    instructions
+    Function(name.clone(), stack_size, instructions)
 }
 
 pub fn emit(assembly: &Assembly) -> Result<String> {
@@ -479,9 +558,9 @@ impl BinaryOperator {
 
 fn emit_instruction(code: &mut String, instruction: &Instruction) -> Result<()> {
     match instruction {
-	Instruction::DeallocateStack(number)    => writeln!(code, "\taddq\t{number}, %rsp")?,
-	Instruction::Push(src)                  => writeln!(code, "\tpush\t{}", src.r4b())?,
-	Instruction::Call(name)                 => writeln!(code, "\tcall\t_{name}")?,
+    	Instruction::DeallocateStack(number)    => writeln!(code, "\taddq\t{number}, %rsp")?,
+    	Instruction::Push(src)                  => writeln!(code, "\tpush\t{}", src.r4b())?,
+    	Instruction::Call(name)                 => writeln!(code, "\tcall\t_{name}")?,
         Instruction::Cmp(src, dst)              => writeln!(code, "\tcmpl\t{}, {}", src.r4b(), dst.r4b())?,
         Instruction::Jmp(label)                 => writeln!(code, "\tjmp\tL{}", label)?,
         Instruction::Label(label)               => writeln!(code, "L{}:", label)?,
@@ -500,7 +579,7 @@ fn emit_instruction(code: &mut String, instruction: &Instruction) -> Result<()> 
 }
 
 fn emit_function(code: &mut String, function: &Function) -> Result<()> {
-    let Function(name, instructions) = function;
+    let Function(name, _stack_size, instructions) = function;
 
     writeln!(code, "\t.global\t_{name}\n_{name}:\n\tpushq\t%rbp\n\tmovq\t%rsp, %rbp")?;
 
