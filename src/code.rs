@@ -25,32 +25,36 @@ pub enum Register {
     R11,
 }
 
-const STACK_COUNT: usize = 6;            // First 6 arguments go into registers
+const STACK_COUNT: usize = 6; // First 6 arguments go into registers
 static ARG_REGISTERS: [Register; STACK_COUNT] = [
-    Register::DI, Register::SI, Register::DX,
-    Register::CX, Register::R8, Register::R9,
+    Register::DI,
+    Register::SI,
+    Register::DX,
+    Register::CX,
+    Register::R8,
+    Register::R9,
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ByteSize {
-    B1 = 0, // 1 byte 
+    B1 = 0, // 1 byte
     B4,     // 4 bytes
-    B8      // 8 bytes
+    B8,     // 8 bytes
 }
 
 const REG_SIZES: usize = 3;
 const REG_COUNT: usize = 9;
 const REGNAME: [[&str; REG_SIZES]; REG_COUNT] = [
     // B1       B4       B8
-    ["%al",   "%eax",  "%rax"],
-    ["%cl",   "%ecx",  "%rcx"],
-    ["%dl",   "%edx",  "%rdx"],
-    ["%dil",  "%edi",  "%rdi"],
-    ["%sil",  "%esi",  "%rsi"],
-    ["%r8b",  "%r8d",  "%r8" ],
-    ["%r9b",  "%r9d",  "%r9" ],
-    ["%r10b", "%r10d", "%r10" ],
-    ["%r11b", "%r11d", "%r11" ],
+    ["%al", "%eax", "%rax"],
+    ["%cl", "%ecx", "%rcx"],
+    ["%dl", "%edx", "%rdx"],
+    ["%dil", "%edi", "%rdi"],
+    ["%sil", "%esi", "%rsi"],
+    ["%r8b", "%r8d", "%r8"],
+    ["%r9b", "%r9d", "%r9"],
+    ["%r10b", "%r10d", "%r10"],
+    ["%r11b", "%r11d", "%r11"],
 ];
 
 #[derive(Debug, Clone, PartialEq)]
@@ -120,8 +124,8 @@ impl tacky::UnaryOperator {
     fn convert(&self) -> UnaryOperator {
         match self {
             tacky::UnaryOperator::Complement => UnaryOperator::Not,
-            tacky::UnaryOperator::Negate     => UnaryOperator::Neg,
-            tacky::UnaryOperator::Not        => UnaryOperator::Not,
+            tacky::UnaryOperator::Negate => UnaryOperator::Neg,
+            tacky::UnaryOperator::Not => UnaryOperator::Not,
         }
     }
 }
@@ -129,14 +133,14 @@ impl tacky::UnaryOperator {
 impl tacky::BinaryOperator {
     fn convert(&self) -> BinaryOperator {
         match self {
-            tacky::BinaryOperator::Add        => BinaryOperator::Add,
-            tacky::BinaryOperator::Subtract   => BinaryOperator::Sub,
-            tacky::BinaryOperator::Multiply   => BinaryOperator::Mult,
+            tacky::BinaryOperator::Add => BinaryOperator::Add,
+            tacky::BinaryOperator::Subtract => BinaryOperator::Sub,
+            tacky::BinaryOperator::Multiply => BinaryOperator::Mult,
             tacky::BinaryOperator::Rightshift => BinaryOperator::Rightshift,
-            tacky::BinaryOperator::Leftshift  => BinaryOperator::Leftshift,
-            tacky::BinaryOperator::BitAnd     => BinaryOperator::BitAnd,
-            tacky::BinaryOperator::BitXor     => BinaryOperator::BitXor,
-            tacky::BinaryOperator::BitOr      => BinaryOperator::BitOr,
+            tacky::BinaryOperator::Leftshift => BinaryOperator::Leftshift,
+            tacky::BinaryOperator::BitAnd => BinaryOperator::BitAnd,
+            tacky::BinaryOperator::BitXor => BinaryOperator::BitXor,
+            tacky::BinaryOperator::BitOr => BinaryOperator::BitOr,
             _ => todo!(),
         }
     }
@@ -146,7 +150,7 @@ impl tacky::Val {
     fn convert(&self) -> Operand {
         match self {
             tacky::Val::Constant(number) => Operand::Imm(*number),
-            tacky::Val::Var(identifier)  => Operand::Pseudo(identifier.to_string()),
+            tacky::Val::Var(identifier) => Operand::Pseudo(identifier.to_string()),
         }
     }
 }
@@ -156,57 +160,55 @@ pub fn generate(ast: &tacky::Tacky) -> Assembly {
     let mut functions: FunctionDefinitions = Vec::new();
 
     for definition in definitions.into_iter() {
-	let mut function = gen_assembly(definition);
-	function = fixup_pseudo(function);
-	function = fixup_invalid(function);
+        let mut function = gen_assembly(definition);
+        function = fixup_pseudo(function);
+        function = fixup_invalid(function);
 
-	functions.push(function);
+        functions.push(function);
     }
 
     Assembly::Program(functions)
 }
 
 fn convert_function_call(name: &String, arguments: &Option<tacky::Args>, dst: &tacky::Val, instructions: &mut Instructions) {
-    let mut stack_padding: i32 = 0;  // in bytes
+    let mut stack_padding: i32 = 0; // in bytes
 
     if let Some(args) = arguments {
-	if (args.len() % 2) == 1 {
-	    stack_padding = 8;
-	    instructions.push(Instruction::AllocateStack(stack_padding));
-	}
+        if (args.len() % 2) == 1 {
+            stack_padding = 8;
+            instructions.push(Instruction::AllocateStack(stack_padding));
+        }
 
-	let at_ix = args.len().min(STACK_COUNT);
-	let register_args = &args[0..at_ix];
-	let stack_args = &args[at_ix..];
+        let at_ix = args.len().min(STACK_COUNT);
+        let register_args = &args[0..at_ix];
+        let stack_args = &args[at_ix..];
 
-	for (index, tacky_arg) in register_args.iter().enumerate() {
-	    let register = ARG_REGISTERS[index];
-	    let assembly_arg = tacky_arg.convert();
-	    instructions.push(Instruction::Mov(assembly_arg, Operand::Reg(register)));
-	}
+        for (index, tacky_arg) in register_args.iter().enumerate() {
+            let register = ARG_REGISTERS[index];
+            let assembly_arg = tacky_arg.convert();
+            instructions.push(Instruction::Mov(assembly_arg, Operand::Reg(register)));
+        }
 
-	for tacky_arg in stack_args.iter().rev() {
-	    let assembly_arg = tacky_arg.convert();
-	    match assembly_arg {
-		Operand::Imm(_) |
-		Operand::Reg(_) => {
-		    instructions.push(Instruction::Push(assembly_arg));
-		},
-		_ => {
-		    instructions.push(Instruction::Mov(assembly_arg, Operand::Reg(Register::AX)));
-		    instructions.push(Instruction::Push(Operand::Reg(Register::AX)));
-		}
-	    }
-	}
-	instructions.push(Instruction::Call(name.to_string()));
+        for tacky_arg in stack_args.iter().rev() {
+            let assembly_arg = tacky_arg.convert();
+            match assembly_arg {
+                Operand::Imm(_) | Operand::Reg(_) => {
+                    instructions.push(Instruction::Push(assembly_arg));
+                }
+                _ => {
+                    instructions.push(Instruction::Mov(assembly_arg, Operand::Reg(Register::AX)));
+                    instructions.push(Instruction::Push(Operand::Reg(Register::AX)));
+                }
+            }
+        }
+        instructions.push(Instruction::Call(name.to_string()));
 
-	let bytes_to_remove: i32 = 8 * (stack_args.len() as i32) + stack_padding;
-	if bytes_to_remove > 0 {
-	    instructions.push(Instruction::DeallocateStack(bytes_to_remove));
-	}
-	
+        let bytes_to_remove: i32 = 8 * (stack_args.len() as i32) + stack_padding;
+        if bytes_to_remove > 0 {
+            instructions.push(Instruction::DeallocateStack(bytes_to_remove));
+        }
     } else {
-	instructions.push(Instruction::Call(name.to_string()));
+        instructions.push(Instruction::Call(name.to_string()));
     }
 
     instructions.push(Instruction::Mov(Operand::Reg(Register::AX), dst.convert()));
@@ -217,20 +219,24 @@ fn gen_assembly(function: &tacky::FunctionDefinition) -> Function {
     let mut instructions: Instructions = Vec::new();
 
     if let Some(params) = parameters {
-	let mut ix = 0;
-	while ix < params.len() && ix < STACK_COUNT {
-	    instructions.push(Instruction::Mov(Operand::Reg(ARG_REGISTERS[ix]),
-					       Operand::Pseudo(params[ix].to_string())));
-	    ix += 1;
-	}
+        let mut ix = 0;
+        while ix < params.len() && ix < STACK_COUNT {
+            instructions.push(Instruction::Mov(
+                Operand::Reg(ARG_REGISTERS[ix]),
+                Operand::Pseudo(params[ix].to_string()),
+            ));
+            ix += 1;
+        }
 
-	let mut stack_depth = 16;
-	while ix < params.len() {
-	    instructions.push(Instruction::Mov(Operand::Stack(stack_depth),
-					       Operand::Pseudo(params[ix].to_string())));
-	    ix += 1;
-	    stack_depth += 8;
-	}
+        let mut stack_depth = 16;
+        while ix < params.len() {
+            instructions.push(Instruction::Mov(
+                Operand::Stack(stack_depth),
+                Operand::Pseudo(params[ix].to_string()),
+            ));
+            ix += 1;
+            stack_depth += 8;
+        }
     }
 
     for instruction in body {
@@ -295,11 +301,7 @@ fn gen_assembly(function: &tacky::FunctionDefinition) -> Function {
             }
             tacky::Instruction::Binary(operator, src1, src2, dst) => {
                 instructions.push(Instruction::Mov(src1.convert(), dst.convert()));
-                instructions.push(Instruction::Binary(
-                    operator.convert(),
-                    src2.convert(),
-                    dst.convert(),
-                ));
+                instructions.push(Instruction::Binary(operator.convert(), src2.convert(), dst.convert()));
             }
             tacky::Instruction::Jump(target) => {
                 instructions.push(Instruction::Jmp(target.to_string()));
@@ -352,25 +354,25 @@ fn fixup_pseudo(function: Function) -> Function {
         match instruction {
             Instruction::Mov(src, dst) => {
                 instructions.push(Instruction::Mov(fixup(src), fixup(dst)));
-            },
+            }
             Instruction::Unary(op, dst) => {
                 instructions.push(Instruction::Unary(op, fixup(dst)));
-            },
+            }
             Instruction::Binary(op, src, dst) => {
                 instructions.push(Instruction::Binary(op, fixup(src), fixup(dst)));
-            },
+            }
             Instruction::Idiv(src) => {
                 instructions.push(Instruction::Idiv(fixup(src)));
-            },
+            }
             Instruction::Cmp(src1, src2) => {
                 instructions.push(Instruction::Cmp(fixup(src1), fixup(src2)));
-            },
+            }
             Instruction::SetCC(op, dst) => {
                 instructions.push(Instruction::SetCC(op, fixup(dst)));
-            },
-    	    Instruction::Push(src) => {
-        		instructions.push(Instruction::Push(fixup(src)));
-    	    },
+            }
+            Instruction::Push(src) => {
+                instructions.push(Instruction::Push(fixup(src)));
+            }
             _ => instructions.push(instruction),
         }
     }
@@ -389,84 +391,44 @@ fn fixup_invalid(function: Function) -> Function {
     for instruction in body.into_iter() {
         match instruction {
             Instruction::Cmp(src1, Operand::Imm(number)) => {
-                instructions.push(Instruction::Mov(
-                    Operand::Imm(number),
-                    Operand::Reg(Register::R11),
-                ));
+                instructions.push(Instruction::Mov(Operand::Imm(number), Operand::Reg(Register::R11)));
                 instructions.push(Instruction::Cmp(src1, Operand::Reg(Register::R11)));
             }
             Instruction::Cmp(Operand::Stack(src1_offset), Operand::Stack(src2_offset)) => {
-                instructions.push(Instruction::Mov(
-                    Operand::Stack(src1_offset),
-                    Operand::Reg(Register::R10),
-                ));
-                instructions.push(Instruction::Cmp(
-                    Operand::Reg(Register::R10),
-                    Operand::Stack(src2_offset),
-                ));
+                instructions.push(Instruction::Mov(Operand::Stack(src1_offset), Operand::Reg(Register::R10)));
+                instructions.push(Instruction::Cmp(Operand::Reg(Register::R10), Operand::Stack(src2_offset)));
             }
             Instruction::Mov(Operand::Stack(src_offset), Operand::Stack(dst_offset)) => {
-                instructions.push(Instruction::Mov(
-                    Operand::Stack(src_offset),
-                    Operand::Reg(Register::R10),
-                ));
-                instructions.push(Instruction::Mov(
-                    Operand::Reg(Register::R10),
-                    Operand::Stack(dst_offset),
-                ));
+                instructions.push(Instruction::Mov(Operand::Stack(src_offset), Operand::Reg(Register::R10)));
+                instructions.push(Instruction::Mov(Operand::Reg(Register::R10), Operand::Stack(dst_offset)));
             }
             Instruction::Idiv(Operand::Imm(number)) => {
-                instructions.push(Instruction::Mov(
-                    Operand::Imm(number),
-                    Operand::Reg(Register::R10),
-                ));
+                instructions.push(Instruction::Mov(Operand::Imm(number), Operand::Reg(Register::R10)));
                 instructions.push(Instruction::Idiv(Operand::Reg(Register::R10)));
             }
             Instruction::Binary(BinaryOperator::Mult, src, Operand::Stack(dst_offset)) => {
-                instructions.push(Instruction::Mov(
-                    Operand::Stack(dst_offset),
-                    Operand::Reg(Register::R11),
-                ));
-                instructions.push(Instruction::Binary(
-                    BinaryOperator::Mult,
-                    src,
-                    Operand::Reg(Register::R11),
-                ));
-                instructions.push(Instruction::Mov(
-                    Operand::Reg(Register::R11),
-                    Operand::Stack(dst_offset),
-                ));
+                instructions.push(Instruction::Mov(Operand::Stack(dst_offset), Operand::Reg(Register::R11)));
+                instructions.push(Instruction::Binary(BinaryOperator::Mult, src, Operand::Reg(Register::R11)));
+                instructions.push(Instruction::Mov(Operand::Reg(Register::R11), Operand::Stack(dst_offset)));
             }
-            Instruction::Binary(BinaryOperator::Leftshift,
-				Operand::Stack(src_offset), Operand::Stack(dst_offset)) => {
-                instructions.push(Instruction::Mov(
-                    Operand::Stack(src_offset),
-                    Operand::Reg(Register::CX),
-                ));
+            Instruction::Binary(BinaryOperator::Leftshift, Operand::Stack(src_offset), Operand::Stack(dst_offset)) => {
+                instructions.push(Instruction::Mov(Operand::Stack(src_offset), Operand::Reg(Register::CX)));
                 instructions.push(Instruction::Binary(
                     BinaryOperator::Leftshift,
                     Operand::Reg(Register::CX),
                     Operand::Stack(dst_offset),
                 ));
             }
-            Instruction::Binary(BinaryOperator::Rightshift,
-				Operand::Stack(src_offset), Operand::Stack(dst_offset)) => {
-                instructions.push(Instruction::Mov(
-                    Operand::Stack(src_offset),
-                    Operand::Reg(Register::CX),
-                ));
+            Instruction::Binary(BinaryOperator::Rightshift, Operand::Stack(src_offset), Operand::Stack(dst_offset)) => {
+                instructions.push(Instruction::Mov(Operand::Stack(src_offset), Operand::Reg(Register::CX)));
                 instructions.push(Instruction::Binary(
                     BinaryOperator::Rightshift,
                     Operand::Reg(Register::CX),
                     Operand::Stack(dst_offset),
                 ));
             }
-            Instruction::Binary(operator,
-				Operand::Stack(src_offset), Operand::Stack(dst_offset)) => {
-                instructions.push(Instruction::Mov(
-                    Operand::Stack(src_offset),
-                    Operand::Reg(Register::R10),
-                ));
+            Instruction::Binary(operator, Operand::Stack(src_offset), Operand::Stack(dst_offset)) => {
+                instructions.push(Instruction::Mov(Operand::Stack(src_offset), Operand::Reg(Register::R10)));
                 instructions.push(Instruction::Binary(
                     operator,
                     Operand::Reg(Register::R10),
@@ -488,7 +450,7 @@ pub fn emit(assembly: &Assembly) -> Result<String> {
 
     let Assembly::Program(functions) = assembly;
     for function in functions {
-    	emit_function(&mut code, function)?;
+        emit_function(&mut code, function)?;
     }
 
     Ok(code)
@@ -497,36 +459,34 @@ pub fn emit(assembly: &Assembly) -> Result<String> {
 impl Operand {
     fn fixup(&self, size: ByteSize) -> String {
         match self {
-            Operand::Reg(register) => {
-		REGNAME[*register as usize][size as usize].to_string()
-	    },
+            Operand::Reg(register) => REGNAME[*register as usize][size as usize].to_string(),
             Operand::Stack(number) => format!("{number}(%rbp)"),
-            Operand::Imm(number)   => format!("${number}"),
-            Operand::Pseudo(_)     => panic!(),
+            Operand::Imm(number) => format!("${number}"),
+            Operand::Pseudo(_) => panic!(),
         }
     }
 
     fn r1b(&self) -> String {
-	self.fixup(ByteSize::B1)
+        self.fixup(ByteSize::B1)
     }
 
     fn r4b(&self) -> String {
-	self.fixup(ByteSize::B4)
+        self.fixup(ByteSize::B4)
     }
 
     fn r8b(&self) -> String {
-	self.fixup(ByteSize::B8)
+        self.fixup(ByteSize::B8)
     }
 }
 
 impl ConditionCode {
     fn name(&self) -> &str {
         match self {
-            ConditionCode::E  => "e",
+            ConditionCode::E => "e",
             ConditionCode::NE => "ne",
-            ConditionCode::G  => "g",
+            ConditionCode::G => "g",
             ConditionCode::GE => "ge",
-            ConditionCode::L  => "l",
+            ConditionCode::L => "l",
             ConditionCode::LE => "le",
         }
     }
@@ -544,41 +504,41 @@ impl UnaryOperator {
 impl BinaryOperator {
     fn name(&self) -> &str {
         match self {
-            BinaryOperator::Add        => "addl",
-            BinaryOperator::Sub        => "subl",
-            BinaryOperator::Mult       => "imull",
-            BinaryOperator::Leftshift  => "sall",
+            BinaryOperator::Add => "addl",
+            BinaryOperator::Sub => "subl",
+            BinaryOperator::Mult => "imull",
+            BinaryOperator::Leftshift => "sall",
             BinaryOperator::Rightshift => "sarl",
-            BinaryOperator::BitAnd     => "andl",
-            BinaryOperator::BitXor     => "xorl",
-            BinaryOperator::BitOr      => "orl",
+            BinaryOperator::BitAnd => "andl",
+            BinaryOperator::BitXor => "xorl",
+            BinaryOperator::BitOr => "orl",
         }
     }
 }
 
 fn emit_instruction(code: &mut String, instruction: &Instruction) -> Result<()> {
     match instruction {
-    	Instruction::DeallocateStack(number)    => writeln!(code, "\taddq\t${number}, %rsp")?,
-    	Instruction::Push(src)                  => writeln!(code, "\tpush\t{}", src.r8b())?,
-    	Instruction::Call(name)                 => writeln!(code, "\tcall\t_{name}")?,
-        Instruction::Cmp(src, dst)              => writeln!(code, "\tcmpl\t{}, {}", src.r4b(), dst.r4b())?,
-        Instruction::Jmp(label)                 => writeln!(code, "\tjmp\tL{}", label)?,
-        Instruction::Label(label)               => writeln!(code, "L{}:", label)?,
-        Instruction::JmpCC(cc, label)           => writeln!(code, "\tj{}\tL{}", cc.name(), label)?,
-        Instruction::SetCC(cc, dst)             => writeln!(code, "\tset{}\t{}", cc.name(), dst.r1b())?,
-        Instruction::Mov(src, dst)              => writeln!(code, "\tmovl\t{}, {}", src.r4b(), dst.r4b())?,
-        Instruction::Unary(operator, dst)       => writeln!(code, "\t{}\t{}", operator.name(), dst.r4b())?,
-        Instruction::AllocateStack(number)      => writeln!(code, "\tsubq\t${number}, %rsp")?,
-        Instruction::Ret                        => writeln!(code, "\tmovq\t%rbp, %rsp\n\tpopq\t%rbp\n\tret")?,
-        Instruction::Cdq                        => writeln!(code, "\tcdq")?,
-        Instruction::Idiv(dst)                  => writeln!(code, "\tidivl\t{}", dst.r4b())?,
+        Instruction::DeallocateStack(number) => writeln!(code, "\taddq\t${number}, %rsp")?,
+        Instruction::Push(src) => writeln!(code, "\tpush\t{}", src.r8b())?,
+        Instruction::Call(name) => writeln!(code, "\tcall\t_{name}")?,
+        Instruction::Cmp(src, dst) => writeln!(code, "\tcmpl\t{}, {}", src.r4b(), dst.r4b())?,
+        Instruction::Jmp(label) => writeln!(code, "\tjmp\tL{}", label)?,
+        Instruction::Label(label) => writeln!(code, "L{}:", label)?,
+        Instruction::JmpCC(cc, label) => writeln!(code, "\tj{}\tL{}", cc.name(), label)?,
+        Instruction::SetCC(cc, dst) => writeln!(code, "\tset{}\t{}", cc.name(), dst.r1b())?,
+        Instruction::Mov(src, dst) => writeln!(code, "\tmovl\t{}, {}", src.r4b(), dst.r4b())?,
+        Instruction::Unary(operator, dst) => writeln!(code, "\t{}\t{}", operator.name(), dst.r4b())?,
+        Instruction::AllocateStack(number) => writeln!(code, "\tsubq\t${number}, %rsp")?,
+        Instruction::Ret => writeln!(code, "\tmovq\t%rbp, %rsp\n\tpopq\t%rbp\n\tret")?,
+        Instruction::Cdq => writeln!(code, "\tcdq")?,
+        Instruction::Idiv(dst) => writeln!(code, "\tidivl\t{}", dst.r4b())?,
         Instruction::Binary(operator, src, dst) => {
             let src_name = match operator {
                 BinaryOperator::Leftshift | BinaryOperator::Rightshift => src.r1b(),
                 _ => src.r4b(),
             };
-            writeln!(code, "\t{}\t{}, {}", operator.name(), src_name, dst.r4b())?; 
-        } 
+            writeln!(code, "\t{}\t{}, {}", operator.name(), src_name, dst.r4b())?;
+        }
     }
 
     Ok(())
@@ -590,7 +550,7 @@ fn emit_function(code: &mut String, function: &Function) -> Result<()> {
     writeln!(code, "\t.global\t_{name}\n_{name}:\n\tpushq\t%rbp\n\tmovq\t%rsp, %rbp")?;
 
     for instruction in instructions {
-	emit_instruction(code, instruction)?;
+        emit_instruction(code, instruction)?;
     }
 
     Ok(())

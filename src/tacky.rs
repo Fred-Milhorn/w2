@@ -99,8 +99,7 @@ fn emit_block(block: &parse::Block, instructions: &mut Instructions) -> Result<(
                 emit_statement(statement, instructions)?;
             }
             parse::BlockItem::D(declaration) => {
-                if let parse::Declaration::VarDecl(
-		    parse::VariableDeclaration(identifier, Some(expression))) = declaration {
+                if let parse::Declaration::VarDecl(parse::VariableDeclaration(identifier, Some(expression))) = declaration {
                     let value = emit_tacky(expression, instructions)?;
                     instructions.push(Instruction::Copy(value, Val::Var(identifier.clone())));
                 }
@@ -202,20 +201,20 @@ fn emit_statement(statement: &parse::Statement, instructions: &mut Instructions)
 fn emit_tacky(expression: &parse::Expression, instructions: &mut Instructions) -> Result<Val> {
     let value = match expression {
         parse::Expression::FunctionCall(identifier, args) => {
-	    let args_exps = match args {
-		Some(arguments) => {
+            let args_exps = match args {
+                Some(arguments) => {
                     let mut values = Vec::new();
 
                     for argument in arguments {
-			let res = emit_tacky(argument, instructions)?;
-			let val = Val::Var(temp_name("arg"));
-			instructions.push(Instruction::Copy(res, val.clone()));
-			values.push(val);
+                        let res = emit_tacky(argument, instructions)?;
+                        let val = Val::Var(temp_name("arg"));
+                        instructions.push(Instruction::Copy(res, val.clone()));
+                        values.push(val);
                     }
-		    Some(values)
-		},
-		None => None,
-	    };
+                    Some(values)
+                }
+                None => None,
+            };
             let result = Val::Var(temp_name("result"));
             instructions.push(Instruction::FunCall(identifier.to_string(), args_exps, result.clone()));
             result

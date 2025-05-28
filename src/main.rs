@@ -28,12 +28,12 @@ use std::process;
 use anyhow::Result;
 use clap::Parser;
 
+mod code;
 mod lex;
 mod parse;
 mod tacky;
-mod validate;
-mod code;
 mod utils;
+mod validate;
 
 #[derive(Parser, Debug)]
 #[command(version, about = "The w2 tiny C compiler", long_about = None)]
@@ -106,27 +106,27 @@ fn run(opts: &Opts, file: &Path) -> Result<()> {
 
     let code = code::generate(&tacky);
     if opts.debug {
-    	println!("code: {:?}\n", code);
+        println!("code: {:?}\n", code);
     }
     if opts.codegen {
-    	process::exit(0);
+        process::exit(0);
     }
 
     let assembly = code::emit(&code)?;
     if opts.debug {
-	println!("assembly: {assembly}\n");
+        println!("assembly: {assembly}\n");
     }
     if opts.emitcode {
-    	process::exit(0);
+        process::exit(0);
     }
 
     let file_s = file_i.with_extension("s");
     fs::write(&file_s, &assembly)?;
 
     if opts.compile {
-    	utils::create_object_file(&file_s)?;
+        utils::create_object_file(&file_s)?;
     } else {
-    	utils::create_executable(&file_s)?;
+        utils::create_executable(&file_s)?;
     }
 
     Ok(())
