@@ -43,8 +43,8 @@ const REG_COUNT: usize = 9;
 const REGNAME: [[&str; REG_SIZES]; REG_COUNT] = [
     // B1       B4       B8
     ["%al",   "%eax",  "%rax"],
-    ["%dl",   "%edx",  "%rdx"],
     ["%cl",   "%ecx",  "%rcx"],
+    ["%dl",   "%edx",  "%rdx"],
     ["%dil",  "%edi",  "%rdi"],
     ["%sil",  "%esi",  "%rsi"],
     ["%r8b",  "%r8d",  "%r8" ],
@@ -368,17 +368,18 @@ fn fixup_pseudo(function: Function) -> Function {
             Instruction::SetCC(op, dst) => {
                 instructions.push(Instruction::SetCC(op, fixup(dst)));
             },
-	    Instruction::Push(src) => {
-		instructions.push(Instruction::Push(fixup(src)));
-	    },
+    	    Instruction::Push(src) => {
+        		instructions.push(Instruction::Push(fixup(src)));
+    	    },
             _ => instructions.push(instruction),
         }
     }
 
     // Now we know that stack depth. insert the stack allocation instruction.
-    instructions.insert(0, Instruction::AllocateStack(stack_depth.abs()));
+    let stack_size = (stack_depth.abs() / 16) * 16 + 16;
+    instructions.insert(0, Instruction::AllocateStack(stack_size));
 
-    Function(name.clone(), stack_depth.abs(), instructions)
+    Function(name.clone(), stack_size, instructions)
 }
 
 fn fixup_invalid(function: Function) -> Function {
@@ -487,7 +488,7 @@ pub fn emit(assembly: &Assembly) -> Result<String> {
 
     let Assembly::Program(functions) = assembly;
     for function in functions {
-	emit_function(&mut code, function)?;
+    	emit_function(&mut code, function)?;
     }
 
     Ok(code)
@@ -513,7 +514,6 @@ impl Operand {
 	self.fixup(ByteSize::B4)
     }
 
-    #[allow(dead_code)]
     fn r8b(&self) -> String {
 	self.fixup(ByteSize::B8)
     }
@@ -558,8 +558,8 @@ impl BinaryOperator {
 
 fn emit_instruction(code: &mut String, instruction: &Instruction) -> Result<()> {
     match instruction {
-    	Instruction::DeallocateStack(number)    => writeln!(code, "\taddq\t{number}, %rsp")?,
-    	Instruction::Push(src)                  => writeln!(code, "\tpush\t{}", src.r4b())?,
+    	Instruction::DeallocateStack(number)    => writeln!(code, "\taddq\t${number}, %rsp")?,
+    	Instruction::Push(src)                  => writeln!(code, "\tpush\t{}", src.r8b())?,
     	Instruction::Call(name)                 => writeln!(code, "\tcall\t_{name}")?,
         Instruction::Cmp(src, dst)              => writeln!(code, "\tcmpl\t{}, {}", src.r4b(), dst.r4b())?,
         Instruction::Jmp(label)                 => writeln!(code, "\tjmp\tL{}", label)?,
@@ -572,7 +572,13 @@ fn emit_instruction(code: &mut String, instruction: &Instruction) -> Result<()> 
         Instruction::Ret                        => writeln!(code, "\tmovq\t%rbp, %rsp\n\tpopq\t%rbp\n\tret")?,
         Instruction::Cdq                        => writeln!(code, "\tcdq")?,
         Instruction::Idiv(dst)                  => writeln!(code, "\tidivl\t{}", dst.r4b())?,
-        Instruction::Binary(operator, src, dst) => writeln!(code, "\t{}\t{}, {}", operator.name(), src.r4b(), dst.r4b())?,
+        Instruction::Binary(operator, src, dst) => {
+            let src_name = match operator {
+                BinaryOperator::Leftshift | BinaryOperator::Rightshift => src.r1b(),
+                _ => src.r4b(),
+            };
+            writeln!(code, "\t{}\t{}, {}", operator.name(), src_name, dst.r4b())?; 
+        } 
     }
 
     Ok(())
