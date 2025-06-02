@@ -98,17 +98,32 @@ pub fn validate(mut ast: Ast) -> Result<Ast> {
 
     // Resolve all the variable names in each function
     for declaration in declarations.iter_mut() {
-        *declaration = resolve_function(declaration, &mut ident_map)?;
+        match declaration {
+            Declaration::FunDecl(function_declaration) => {
+                *declaration = Declaration::FunDecl(resolve_function(function_declaration, &mut ident_map)?);
+            },
+            Declaration::VarDecl(_) => todo!(),
+        }
     }
 
     // Label all the loops, breaks, continues
     for declaration in declarations.iter_mut() {
-        *declaration = label_loops(declaration, &None)?;
+        match declaration {
+            Declaration::FunDecl(function_declaration) => {
+                *declaration = Declaration::FunDecl(label_loops(function_declaration, &None)?);
+            },
+            Declaration::VarDecl(_) => todo!(),
+        }
     }
 
     // Typecheck all declarations, definitions, and variables
     for declaration in declarations {
-        typecheck_function(declaration, &mut type_map)?;
+        match declaration {
+            Declaration::FunDecl(function_declaration) => {
+                typecheck_function(function_declaration, &mut type_map)?;
+            },
+            Declaration::VarDecl(_) => todo!(),
+        }
     }
 
     Ok(ast)
@@ -130,7 +145,7 @@ fn resolve_parameter(parameter: &Identifier, ident_map: &mut IdentMap) -> Result
 }
 
 fn resolve_function(declaration: &FunctionDeclaration, ident_map: &mut IdentMap) -> Result<FunctionDeclaration> {
-    let FunctionDeclaration(name, opt_params, opt_body) = declaration;
+    let FunctionDeclaration(name, opt_params, opt_body, opt_storage_class) = declaration;
 
     if let Some(entry) = ident_map.get(name) {
         if entry.from_current_scope && !entry.has_linkage {
@@ -157,7 +172,7 @@ fn resolve_function(declaration: &FunctionDeclaration, ident_map: &mut IdentMap)
         None => None,
     };
 
-    Ok(FunctionDeclaration(name.clone(), new_params, new_body))
+    Ok(FunctionDeclaration(name.clone(), new_params, new_body, opt_storage_class.clone()))
 }
 
 fn resolve_block(block: &Block, ident_map: &mut IdentMap) -> Result<Block> {
@@ -167,7 +182,7 @@ fn resolve_block(block: &Block, ident_map: &mut IdentMap) -> Result<Block> {
         let new_item = match item {
             BlockItem::D(declaration) => BlockItem::D(match declaration {
                 Declaration::FunDecl(fundecl) => match fundecl {
-                    FunctionDeclaration(name, _, Some(_)) => {
+                    FunctionDeclaration(name, _, Some(_), _) => {
                         return Err(anyhow!("resolve_block: nested function definitions not allowed: {name:?}"));
                     }
                     _ => Declaration::FunDecl(resolve_function(fundecl, ident_map)?),
@@ -183,7 +198,7 @@ fn resolve_block(block: &Block, ident_map: &mut IdentMap) -> Result<Block> {
 }
 
 fn resolve_variable(declaration: &VariableDeclaration, ident_map: &mut IdentMap) -> Result<VariableDeclaration> {
-    let VariableDeclaration(name, init) = declaration;
+    let VariableDeclaration(name, init, opt_storage_class) = declaration;
 
     if let Some(entry) = ident_map.get(name) {
         if entry.from_current_scope {
@@ -199,7 +214,7 @@ fn resolve_variable(declaration: &VariableDeclaration, ident_map: &mut IdentMap)
         None => None,
     };
 
-    Ok(VariableDeclaration(unique_name, resolved_init))
+    Ok(VariableDeclaration(unique_name, resolved_init, opt_storage_class.clone()))
 }
 
 fn resolve_statement(statement: &Statement, ident_map: &IdentMap) -> Result<Statement> {
@@ -411,9 +426,9 @@ fn label_block(block: &Block, label: &Option<Label>) -> Result<Block> {
 }
 
 fn label_loops(declaration: &FunctionDeclaration, label: &Option<Label>) -> Result<FunctionDeclaration> {
-    if let FunctionDeclaration(name, opt_params, Some(body)) = declaration {
+    if let FunctionDeclaration(name, opt_params, Some(body), opt_storage_class) = declaration {
         let new_body = label_block(body, label)?;
-        return Ok(FunctionDeclaration(name.clone(), opt_params.clone(), Some(new_body)));
+        return Ok(FunctionDeclaration(name.clone(), opt_params.clone(), Some(new_body), opt_storage_class.clone()));
     }
 
     Ok(declaration.clone())
@@ -542,7 +557,7 @@ fn typecheck_block(block: &Block, type_map: &mut TypeMap) -> Result<()> {
 }
 
 fn typecheck_variable(declaration: &VariableDeclaration, type_map: &mut TypeMap) -> Result<()> {
-    let VariableDeclaration(name, init) = declaration;
+    let VariableDeclaration(name, init, _opt_storage_class) = declaration;
 
     type_map.add(name, Type::Int, false);
     if let Some(expression) = init {
@@ -553,7 +568,7 @@ fn typecheck_variable(declaration: &VariableDeclaration, type_map: &mut TypeMap)
 }
 
 fn typecheck_function(declaration: &FunctionDeclaration, type_map: &mut TypeMap) -> Result<()> {
-    let FunctionDeclaration(name, parameters, body) = declaration;
+    let FunctionDeclaration(name, parameters, body, _opt_storage_class) = declaration;
 
     let function_type = match parameters {
         Some(params) => Type::FunType(params.len()),

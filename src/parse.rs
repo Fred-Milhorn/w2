@@ -15,7 +15,7 @@ pub type Label = String;
 pub type Block = Vec<BlockItem>;
 pub type Params = Vec<Identifier>;
 pub type FunctionArgs = Vec<Expression>;
-pub type FunctionDeclarations = Vec<FunctionDeclaration>;
+pub type Declarations = Vec<Declaration>;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum UnaryOperator {
@@ -89,10 +89,17 @@ pub enum Statement {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct VariableDeclaration(pub Identifier, pub Option<Expression>);
+#[allow(dead_code)]
+pub enum StorageClass {
+    Static,
+    Extern,
+}
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct FunctionDeclaration(pub Identifier, pub Option<Params>, pub Option<Block>);
+pub struct VariableDeclaration(pub Identifier, pub Option<Expression>, pub Option<StorageClass>);
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct FunctionDeclaration(pub Identifier, pub Option<Params>, pub Option<Block>, pub Option<StorageClass>);
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Declaration {
@@ -102,7 +109,7 @@ pub enum Declaration {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Ast {
-    Program(FunctionDeclarations),
+    Program(Declarations),
 }
 
 pub struct TokenStream<'a>(Peekable<Iter<'a, Token>>);
@@ -143,23 +150,14 @@ impl TokenStream<'_> {
 
 pub fn parse(token_list: &TokenList) -> Result<Ast> {
     let mut tokens: TokenStream = TokenStream::new(token_list);
-    let mut declarations = Vec::<FunctionDeclaration>::new();
+    let mut declarations = Vec::<Declaration>::new();
 
     while *tokens.peek()? != Token::Eot {
-        let declaration = expect_function_declaration(&mut tokens)?;
+        let declaration = parse_declaration(&mut tokens)?;
         declarations.push(declaration);
     }
 
     Ok(Ast::Program(declarations))
-}
-
-fn expect_function_declaration(tokens: &mut TokenStream) -> Result<FunctionDeclaration> {
-    let declaration = match parse_declaration(tokens)? {
-        Declaration::FunDecl(declaration) => declaration.clone(),
-        Declaration::VarDecl(vardecl) => return Err(anyhow!("parse: unexpected variable declaration: '{vardecl:?}'")),
-    };
-
-    Ok(declaration)
 }
 
 fn expect_variable_declaration(tokens: &mut TokenStream) -> Result<VariableDeclaration> {
@@ -184,7 +182,7 @@ fn parse_variable_declaration(tokens: &mut TokenStream, name: String) -> Result<
         token => return Err(anyhow!("parse_variable_declaration: unexpected token: '{token:?}'")),
     };
 
-    Ok(VariableDeclaration(name, expression))
+    Ok(VariableDeclaration(name, expression, None))
 }
 
 fn parse_parameter(tokens: &mut TokenStream) -> Result<Identifier> {
@@ -237,7 +235,7 @@ fn parse_function_declaration(tokens: &mut TokenStream, name: String) -> Result<
         token => return Err(anyhow!("parse_function_declaration: unexpected token: '{token:?}'")),
     };
 
-    Ok(FunctionDeclaration(name, optional_params, optional_body))
+    Ok(FunctionDeclaration(name, optional_params, optional_body, None))
 }
 
 fn parse_declaration(tokens: &mut TokenStream) -> Result<Declaration> {

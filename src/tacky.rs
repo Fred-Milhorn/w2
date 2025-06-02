@@ -73,18 +73,25 @@ pub fn generate(ast: &parse::Ast) -> Result<Tacky> {
     let mut definitions: FunctionDefinitions = Vec::new();
 
     for declaration in declarations {
-        if let parse::FunctionDeclaration(name, params, Some(body)) = declaration {
-            let definition = gen_function(name, params, body)?;
-            definitions.push(definition);
+        match declaration {
+            parse::Declaration::FunDecl(function_declaration) => {
+                let definition = gen_function(function_declaration)?;
+                definitions.push(definition);
+            },
+            parse::Declaration::VarDecl(_) => todo!()
         }
     }
 
     Ok(Tacky::Program(definitions))
 }
 
-fn gen_function(name: &String, params: &Option<Vec<String>>, body: &parse::Block) -> Result<FunctionDefinition> {
+fn gen_function(declaration: &parse::FunctionDeclaration) -> Result<FunctionDefinition> {
+    let parse::FunctionDeclaration(name, params, body, _) = declaration; 
     let mut instructions: Instructions = Vec::new();
-    emit_block(body, &mut instructions)?;
+
+    if let Some(block) = body { 
+        emit_block(block, &mut instructions)?;
+    }
 
     // Patch functions without return
     instructions.push(Instruction::Return(Val::Constant(0)));
@@ -99,7 +106,7 @@ fn emit_block(block: &parse::Block, instructions: &mut Instructions) -> Result<(
                 emit_statement(statement, instructions)?;
             }
             parse::BlockItem::D(declaration) => {
-                if let parse::Declaration::VarDecl(parse::VariableDeclaration(identifier, Some(expression))) = declaration {
+                if let parse::Declaration::VarDecl(parse::VariableDeclaration(identifier, Some(expression), _)) = declaration {
                     let value = emit_tacky(expression, instructions)?;
                     instructions.push(Instruction::Copy(value, Val::Var(identifier.clone())));
                 }
@@ -170,7 +177,7 @@ fn emit_statement(statement: &parse::Statement, instructions: &mut Instructions)
             let continue_label = mklabel("continue", label);
             let break_label = mklabel("break", label);
             match for_init {
-                parse::ForInit::InitDecl(parse::VariableDeclaration(identifier, Some(expression))) => {
+                parse::ForInit::InitDecl(parse::VariableDeclaration(identifier, Some(expression), _)) => {
                     let value = emit_tacky(expression, instructions)?;
                     instructions.push(Instruction::Copy(value, Val::Var(identifier.clone())));
                 }

@@ -60,6 +60,8 @@ pub enum Token {
     Break,
     Continue,
     Comma,
+    Static,
+    Extern,
 }
 
 pub type TokenList = Vec<Token>;
@@ -193,6 +195,8 @@ pub fn lex(input: &str) -> Result<TokenList> {
                     "for" => Token::For,
                     "break" => Token::Break,
                     "continue" => Token::Continue,
+                    "static" => Token::Static,
+                    "extern" => Token::Extern,
                     name => Token::Identifier(name.to_string()),
                 };
                 (token, matched.len())
