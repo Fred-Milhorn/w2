@@ -444,7 +444,7 @@ fn fixup_invalid(function: Function) -> Function {
 
 pub fn emit(assembly: &Assembly) -> Result<String> {
     let mut code = String::new();
-    let preamble = "\t.section\t__TEXT,__text,regular,pure_instructions\n\t.build_version macos, 15, 0\tsdk_version 15, 2\n";
+    let preamble = "\t.section\t__TEXT,__text,regular,pure_instructions\n\t.build_version macos, 12, 0\tsdk_version 12, 2\n";
 
     writeln!(&mut code, "{preamble}")?;
 

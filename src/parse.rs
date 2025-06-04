@@ -89,7 +89,6 @@ pub enum Statement {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-#[allow(dead_code)]
 pub enum StorageClass {
     Static,
     Extern,
@@ -171,16 +170,6 @@ pub fn parse(token_list: &TokenList) -> Result<Ast> {
     }
 
     Ok(Ast::Program(declarations))
-}
-
-#[allow(dead_code)]
-fn expect_variable_declaration(tokens: &mut TokenStream) -> Result<VariableDeclaration> {
-    let declaration = match parse_declaration(tokens)? {
-        Declaration::VarDecl(declaration) => declaration.clone(),
-        Declaration::FunDecl(fundecl) => return Err(anyhow!("parse: unexpected variable declaration: '{fundecl:?}'")),
-    };
-
-    Ok(declaration)
 }
 
 fn parse_variable_declaration(tokens: &mut TokenStream, name: String, specifier: &Specifier) -> Result<VariableDeclaration> {
