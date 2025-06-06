@@ -7,7 +7,7 @@ use std::collections::HashMap;
 
 use crate::parse::{
     Ast, Block, BlockItem, Declaration, Expression, ForInit, FunctionDeclaration, Identifier, Label, Statement, UnaryOperator,
-    VariableDeclaration,
+    VariableDeclaration, StorageClass
 };
 use crate::utils::temp_name;
 
@@ -18,30 +18,41 @@ enum Type {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-struct TypeEntry {
-    sym_type: Type,
-    defined: bool,
+enum InitialValue {
+    Tentative,
+    Initial(i32),
+    NoInitializer,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-struct TypeMap(HashMap<Identifier, TypeEntry>);
+enum IdentAttrs {
+    Function(bool, bool),
+    Static(InitialValue, bool),
+    Local,
+}
 
-impl TypeMap {
+#[derive(Debug, Clone, PartialEq)]
+struct Symbol {
+    symbol_type: Type,
+    attrs: IdentAttrs,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct SymbolTable(HashMap<Identifier, Symbol>);
+
+impl SymbolTable {
     fn new() -> Self {
         Self(HashMap::new())
     }
 
-    fn get(&self, name: &String) -> Option<TypeEntry> {
+    fn get(&self, name: &String) -> Option<Symbol> {
         self.0.get(name).cloned()
     }
 
-    fn add(&mut self, name: &str, ident_type: Type, is_defined: bool) -> Option<TypeEntry> {
+    fn add(&mut self, name: &str, symbol: Symbol) -> Option<Symbol> {
         self.0.insert(
-            name.to_owned(),
-            TypeEntry {
-                sym_type: ident_type,
-                defined: is_defined,
-            },
+            name.to_string(),
+            symbol,
         )
     }
 }
@@ -56,7 +67,7 @@ struct MapEntry {
 impl MapEntry {
     fn new(name: &str, current: bool, linkage: bool) -> Self {
         Self {
-            new_name: name.to_owned(),
+            new_name: name.to_string(),
             from_current_scope: current,
             has_linkage: linkage,
         }
@@ -76,8 +87,7 @@ impl IdentMap {
     }
 
     fn add(&mut self, name: &str, new_name: &str, from_current_scope: bool, has_linkage: bool) -> Option<MapEntry> {
-        self.0
-            .insert(name.to_owned(), MapEntry::new(new_name, from_current_scope, has_linkage))
+        self.0.insert(name.to_string(), MapEntry::new(new_name, from_current_scope, has_linkage))
     }
 
     fn duplicate(&self) -> IdentMap {
@@ -94,7 +104,7 @@ impl IdentMap {
 pub fn validate(mut ast: Ast) -> Result<Ast> {
     let Ast::Program(ref mut declarations) = ast;
     let mut ident_map = IdentMap::new();
-    let mut type_map = TypeMap::new();
+    let mut symbol_table = SymbolTable::new();
 
     // Resolve all the variable names in each function
     for declaration in declarations.iter_mut() {
@@ -102,17 +112,16 @@ pub fn validate(mut ast: Ast) -> Result<Ast> {
             Declaration::FunDecl(function_declaration) => {
                 *declaration = Declaration::FunDecl(resolve_function(function_declaration, &mut ident_map)?);
             },
-            Declaration::VarDecl(_) => todo!(),
+            Declaration::VarDecl(variable_declaration) => {
+                resolve_file_scope_variables(variable_declaration, &mut ident_map);
+            }
         }
     }
 
     // Label all the loops, breaks, continues
     for declaration in declarations.iter_mut() {
-        match declaration {
-            Declaration::FunDecl(function_declaration) => {
+        if let Declaration::FunDecl(function_declaration) = declaration {
                 *declaration = Declaration::FunDecl(label_loops(function_declaration, &None)?);
-            },
-            Declaration::VarDecl(_) => todo!(),
         }
     }
 
@@ -120,13 +129,21 @@ pub fn validate(mut ast: Ast) -> Result<Ast> {
     for declaration in declarations {
         match declaration {
             Declaration::FunDecl(function_declaration) => {
-                typecheck_function(function_declaration, &mut type_map)?;
+                typecheck_function(function_declaration, &mut symbol_table)?;
             },
-            Declaration::VarDecl(_) => todo!(),
+            Declaration::VarDecl(variable_declaration) => {
+                typecheck_file_scope_variable(variable_declaration, &mut symbol_table)?;
+            }
         }
     }
 
     Ok(ast)
+}
+
+fn resolve_file_scope_variables(declaration: &VariableDeclaration, ident_map: &mut IdentMap) {
+    let VariableDeclaration(name, _, _) = declaration;
+
+    ident_map.add(name, name, true, true);
 }
 
 fn resolve_parameter(parameter: &Identifier, ident_map: &mut IdentMap) -> Result<Identifier> {
@@ -184,10 +201,13 @@ fn resolve_block(block: &Block, ident_map: &mut IdentMap) -> Result<Block> {
                 Declaration::FunDecl(fundecl) => match fundecl {
                     FunctionDeclaration(name, _, Some(_), _) => {
                         return Err(anyhow!("resolve_block: nested function definitions not allowed: {name:?}"));
-                    }
+                    },
+                    FunctionDeclaration(name, _, _, Some(StorageClass::Static)) => {
+                        return Err(anyhow!("resolve_block: function declarations cannot be static: {name:?}"));    
+                    },
                     _ => Declaration::FunDecl(resolve_function(fundecl, ident_map)?),
                 },
-                Declaration::VarDecl(vardecl) => Declaration::VarDecl(resolve_variable(vardecl, ident_map)?),
+                Declaration::VarDecl(vardecl) => Declaration::VarDecl(resolve_local_variable(vardecl, ident_map)?),
             }),
             BlockItem::S(statement) => BlockItem::S(resolve_statement(statement, ident_map)?),
         };
@@ -197,24 +217,34 @@ fn resolve_block(block: &Block, ident_map: &mut IdentMap) -> Result<Block> {
     Ok(new_block)
 }
 
-fn resolve_variable(declaration: &VariableDeclaration, ident_map: &mut IdentMap) -> Result<VariableDeclaration> {
+fn resolve_local_variable(declaration: &VariableDeclaration, ident_map: &mut IdentMap) -> Result<VariableDeclaration> {
     let VariableDeclaration(name, init, opt_storage_class) = declaration;
 
     if let Some(entry) = ident_map.get(name) {
         if entry.from_current_scope {
-            return Err(anyhow!("resolve_declaration: duplicate declaration of variable '{name}'"));
+            if !(entry.has_linkage && matches!(opt_storage_class, Some(StorageClass::Extern))) {
+                return Err(anyhow!("resolve_local_variable: conflicting local declarations of variable '{name}'"));
+            }
         }
     }
 
-    let unique_name = temp_name(name);
-    ident_map.add(name, &unique_name, true, false);
+    match opt_storage_class {
+        Some(StorageClass::Extern) => {
+            ident_map.add(name, name, true, true);
+            Ok(declaration.clone())
+        },
+        _ => {
+            let unique_name = temp_name(name);
+            ident_map.add(name, &unique_name, true, false);
 
-    let resolved_init = match init {
-        Some(initializer) => Some(resolve_expression(initializer, ident_map)?),
-        None => None,
-    };
+            let resolved_init = match init {
+                Some(initializer) => Some(resolve_expression(initializer, ident_map)?),
+                None => None,
+            };
 
-    Ok(VariableDeclaration(unique_name, resolved_init, opt_storage_class.clone()))
+            Ok(VariableDeclaration(unique_name, resolved_init, opt_storage_class.clone()))
+        }
+    }
 }
 
 fn resolve_statement(statement: &Statement, ident_map: &IdentMap) -> Result<Statement> {
@@ -277,7 +307,7 @@ fn resolve_optional_expression(optional_expression: &Option<Expression>, ident_m
 
 fn resolve_for_init(for_init: &ForInit, ident_map: &mut IdentMap) -> Result<ForInit> {
     let resolved_for_init = match for_init {
-        ForInit::InitDecl(declaration) => ForInit::InitDecl(resolve_variable(declaration, ident_map)?),
+        ForInit::InitDecl(declaration) => ForInit::InitDecl(resolve_local_variable(declaration, ident_map)?),
         ForInit::InitExp(expression) => ForInit::InitExp(resolve_optional_expression(expression, ident_map)?),
     };
 
@@ -434,49 +464,54 @@ fn label_loops(declaration: &FunctionDeclaration, label: &Option<Label>) -> Resu
     Ok(declaration.clone())
 }
 
-fn typecheck_for_init(for_init: &ForInit, type_map: &mut TypeMap) -> Result<()> {
+fn typecheck_for_init(for_init: &ForInit, symbol_table : &mut SymbolTable) -> Result<()> {
     match for_init {
-        ForInit::InitDecl(declaration) => typecheck_variable(declaration, type_map)?,
-        ForInit::InitExp(Some(expression)) => typecheck_expression(expression, type_map)?,
+        ForInit::InitDecl(declaration) => {
+            if let VariableDeclaration(name, _, Some(_)) = declaration {
+                return Err(anyhow!("typecheck_for_init: Storage class on for-init not allowed: {name:?}"));
+            }
+            typecheck_local_variable(declaration, symbol_table)?;
+        },
+        ForInit::InitExp(Some(expression)) => typecheck_expression(expression, symbol_table)?,
         _ => (),
     }
 
     Ok(())
 }
 
-fn typecheck_statement(statement: &Statement, type_map: &mut TypeMap) -> Result<()> {
+fn typecheck_statement(statement: &Statement, symbol_table : &mut SymbolTable) -> Result<()> {
     match statement {
         Statement::Return(expression) => {
-            typecheck_expression(expression, type_map)?;
+            typecheck_expression(expression, symbol_table)?;
         }
         Statement::Expression(expression) => {
-            typecheck_expression(expression, type_map)?;
+            typecheck_expression(expression, symbol_table)?;
         }
         Statement::If(expression, then_branch, else_branch) => {
-            typecheck_expression(expression, type_map)?;
-            typecheck_statement(then_branch, type_map)?;
+            typecheck_expression(expression, symbol_table)?;
+            typecheck_statement(then_branch, symbol_table)?;
             if let Some(else_part) = else_branch {
-                typecheck_statement(else_part, type_map)?;
+                typecheck_statement(else_part, symbol_table)?;
             }
         }
-        Statement::Compound(block) => typecheck_block(block, type_map)?,
+        Statement::Compound(block) => typecheck_block(block, symbol_table)?,
         Statement::While(expression, statement, _) => {
-            typecheck_expression(expression, type_map)?;
-            typecheck_statement(statement, type_map)?;
+            typecheck_expression(expression, symbol_table)?;
+            typecheck_statement(statement, symbol_table)?;
         }
         Statement::DoWhile(statement, expression, _) => {
-            typecheck_statement(statement, type_map)?;
-            typecheck_expression(expression, type_map)?;
+            typecheck_statement(statement, symbol_table)?;
+            typecheck_expression(expression, symbol_table)?;
         }
         Statement::For(for_init, opt_condition, opt_post, body, _) => {
-            typecheck_for_init(for_init, type_map)?;
+            typecheck_for_init(for_init, symbol_table)?;
             if let Some(condition) = opt_condition {
-                typecheck_expression(condition, type_map)?;
+                typecheck_expression(condition, symbol_table )?;
             }
             if let Some(post) = opt_post {
-                typecheck_expression(post, type_map)?;
+                typecheck_expression(post, symbol_table)?;
             }
-            typecheck_statement(body, type_map)?;
+            typecheck_statement(body, symbol_table)?;
         }
         _ => (),
     }
@@ -484,10 +519,10 @@ fn typecheck_statement(statement: &Statement, type_map: &mut TypeMap) -> Result<
     Ok(())
 }
 
-fn typecheck_expression(expression: &Expression, type_map: &mut TypeMap) -> Result<()> {
+fn typecheck_expression(expression: &Expression, symbol_table: &mut SymbolTable) -> Result<()> {
     match expression {
-        Expression::FunctionCall(name, opt_args) => match type_map.get(name) {
-            Some(entry) => match entry.sym_type {
+        Expression::FunctionCall(name, opt_args) => match symbol_table.get(name) {
+            Some(entry) => match entry.symbol_type {
                 Type::Int => return Err(anyhow!("Variable used as function name: {name:?}")),
                 Type::FunType(params_count) => {
                     let args_count = match opt_args {
@@ -501,40 +536,40 @@ fn typecheck_expression(expression: &Expression, type_map: &mut TypeMap) -> Resu
 
                     if let Some(args) = opt_args {
                         for arg in args {
-                            typecheck_expression(arg, type_map)?;
+                            typecheck_expression(arg, symbol_table)?;
                         }
                     }
                 }
             },
             None => return Err(anyhow!("Undefined function call: {name:?}")),
         },
-        Expression::Var(name) => match type_map.get(name) {
+        Expression::Var(name) => match symbol_table.get(name) {
             Some(entry) => {
-                if let Type::FunType(_) = entry.sym_type {
+                if let Type::FunType(_) = entry.symbol_type {
                     return Err(anyhow!("Function name used as variable: {name:?}"));
                 }
             }
             None => return Err(anyhow!("Undeclared variable in expression: {name:?}")),
         },
         Expression::Assignment(lvalue, expression) => {
-            typecheck_expression(lvalue, type_map)?;
-            typecheck_expression(expression, type_map)?;
+            typecheck_expression(lvalue, symbol_table)?;
+            typecheck_expression(expression, symbol_table)?;
         }
         Expression::Unary(_, expression) => {
-            typecheck_expression(expression, type_map)?;
+            typecheck_expression(expression, symbol_table)?;
         }
         Expression::Binary(_, lhs, rhs) => {
-            typecheck_expression(lhs, type_map)?;
-            typecheck_expression(rhs, type_map)?;
+            typecheck_expression(lhs, symbol_table)?;
+            typecheck_expression(rhs, symbol_table)?;
         }
         Expression::CompoundAssignment(_, lvalue, rhs) => {
-            typecheck_expression(lvalue, type_map)?;
-            typecheck_expression(rhs, type_map)?;
+            typecheck_expression(lvalue, symbol_table)?;
+            typecheck_expression(rhs, symbol_table)?;
         }
         Expression::Conditional(condition, then_branch, else_branch) => {
-            typecheck_expression(condition, type_map)?;
-            typecheck_expression(then_branch, type_map)?;
-            typecheck_expression(else_branch, type_map)?;
+            typecheck_expression(condition, symbol_table)?;
+            typecheck_expression(then_branch, symbol_table)?;
+            typecheck_expression(else_branch, symbol_table)?;
         }
         _ => (),
     }
@@ -542,59 +577,157 @@ fn typecheck_expression(expression: &Expression, type_map: &mut TypeMap) -> Resu
     Ok(())
 }
 
-fn typecheck_block(block: &Block, type_map: &mut TypeMap) -> Result<()> {
+fn typecheck_block(block: &Block, symbol_table: &mut SymbolTable) -> Result<()> {
     for item in block {
         match item {
             BlockItem::D(declaration) => match declaration {
-                Declaration::VarDecl(vardecl) => typecheck_variable(vardecl, type_map)?,
-                Declaration::FunDecl(fundecl) => typecheck_function(fundecl, type_map)?,
+                Declaration::VarDecl(vardecl) => typecheck_local_variable(vardecl, symbol_table)?,
+                Declaration::FunDecl(fundecl) => typecheck_function(fundecl, symbol_table)?,
             },
-            BlockItem::S(statement) => typecheck_statement(statement, type_map)?,
+            BlockItem::S(statement) => typecheck_statement(statement, symbol_table)?,
         }
     }
 
     Ok(())
 }
 
-fn typecheck_variable(declaration: &VariableDeclaration, type_map: &mut TypeMap) -> Result<()> {
-    let VariableDeclaration(name, init, _opt_storage_class) = declaration;
+fn typecheck_local_variable(declaration: &VariableDeclaration, symbol_table: &mut SymbolTable) -> Result<()> {
+    let VariableDeclaration(name, init, opt_storage_class) = declaration;
 
-    type_map.add(name, Type::Int, false);
-    if let Some(expression) = init {
-        typecheck_expression(expression, type_map)?;
-    }
+    match opt_storage_class {
+        Some(StorageClass::Extern) => {
+            if init.is_some() {
+                return Err(anyhow!("typecheck_local_variable: Initializer on local extern variable declaration: {name:?}"));
+            }
+            match symbol_table.get(name) {
+                Some(entry) => {
+                    if entry.symbol_type != Type::Int {
+                        return Err(anyhow!("typecheck_local_variable: function redeclared as variable: {entry:?}"));
+                    }
+                },
+                None => {
+                    symbol_table.add(name, Symbol {
+                        symbol_type: Type::Int,
+                        attrs: IdentAttrs::Static(InitialValue::NoInitializer, true),
+                    });
+                }
+            }
+        },
+        Some(StorageClass::Static) => {
+            let initial_value = match init {
+                Some(Expression::Constant(number)) =>  InitialValue::Initial(*number),
+                None => InitialValue::Initial(0),
+                _ => return Err(anyhow!("typecheck_local_variable: Non-constant initializer on local static variable: {name:?}"))
+            };
+            symbol_table.add(name, Symbol {
+                symbol_type: Type::Int,
+                attrs: IdentAttrs::Static(initial_value, false)
+            });
+        },
+        _ => {
+            symbol_table.add(name, Symbol {
+                symbol_type: Type::Int,
+                attrs: IdentAttrs::Local
+            });
+
+            if let Some(expression) = init {
+                typecheck_expression(expression, symbol_table)?;
+            }
+        }
+    }     
 
     Ok(())
 }
 
-fn typecheck_function(declaration: &FunctionDeclaration, type_map: &mut TypeMap) -> Result<()> {
-    let FunctionDeclaration(name, parameters, body, _opt_storage_class) = declaration;
-
-    let function_type = match parameters {
-        Some(params) => Type::FunType(params.len()),
-        None => Type::FunType(0),
+fn typecheck_file_scope_variable(declaration: &VariableDeclaration, symbol_table : &mut SymbolTable) -> Result<()> {
+    let VariableDeclaration(name, init, opt_storage_class) = declaration;
+    
+    let mut initial_value = match init {
+        Some(Expression::Constant(number)) => InitialValue::Initial(*number),
+        None => if matches!(opt_storage_class, Some(StorageClass::Extern)) {
+                    InitialValue::NoInitializer
+                } else {
+                    InitialValue::Tentative
+                },
+        _ => return Err(anyhow!("typecheck_file_scope_variable: non-constant initializer: {init:?}"))
     };
+    let mut global = !matches!(opt_storage_class, Some(StorageClass::Static));
 
+    if let Some(entry) = symbol_table.get(name) {
+        if entry.symbol_type != Type::Int {
+            return Err(anyhow!("Function redeclared as variable: '{entry:?}'"));
+        }
+        let mut entry_is_global = false;
+        let mut entry_initial_value = InitialValue::NoInitializer;
+        if let IdentAttrs::Static(ref entry_value, entry_scope) = entry.attrs {
+            entry_is_global = entry_scope;
+            entry_initial_value = entry_value.clone();
+        }
+        if matches!(opt_storage_class, Some(StorageClass::Extern)) {
+            global = entry_is_global;
+        } else if global != entry_is_global {
+            return Err(anyhow!("typecheck_file_scope_variable: conflicting variable linkage: {entry:?}"));
+        }
+        if matches!(entry_initial_value, InitialValue::Initial(_)) {
+            if matches!(initial_value, InitialValue::Initial(_)) {
+                return Err(anyhow!("typecheck_file_scope_varuable: conflicting file scope variable definitions: {entry:?}"));
+            } else {
+                initial_value = entry_initial_value;
+            }
+        } else if !matches!(initial_value, InitialValue::Initial(_)) &&
+                   matches!(entry_initial_value, InitialValue::Tentative) {
+            initial_value = InitialValue::Tentative;
+        }
+    }
+
+    symbol_table.add(name, Symbol {
+        symbol_type: Type::Int,
+        attrs: IdentAttrs::Static(initial_value, global)
+    });
+    
+    Ok(())
+}
+
+fn typecheck_function(declaration: &FunctionDeclaration, symbol_table: &mut SymbolTable) -> Result<()> {
+    let FunctionDeclaration(name, parameters, body, opt_storage_class) = declaration;
+
+    let function_type = Type::FunType(parameters.as_ref().map_or(0, |params| params.len()));
+    let mut global = !matches!(opt_storage_class, Some(StorageClass::Static));
     let mut already_defined = false;
-    if let Some(entry) = type_map.get(name) {
-        if entry.sym_type != function_type {
+
+    if let Some(entry) = symbol_table.get(name) {
+        if entry.symbol_type != function_type {
             return Err(anyhow!("Incompatible function declarations: '{entry:?}'"));
         }
-        already_defined = entry.defined;
+        let mut entry_is_global = false;
+        if let IdentAttrs::Function(entry_defined, entry_scope) = entry.attrs {
+            already_defined = entry_defined;
+            entry_is_global = entry_scope;
+        }
         if already_defined && body.is_some() {
             return Err(anyhow!("Function defined more than once: {entry:?}'"));
         }
+        if matches!(opt_storage_class, Some(StorageClass::Static)) && entry_is_global {
+            return Err(anyhow!("Static function delcaration follows non-static: {entry:?}"));
+        }
+        global = entry_is_global;
     }
 
-    type_map.add(name, function_type, already_defined || body.is_some());
+    symbol_table.add(name, Symbol {
+        symbol_type: function_type,
+        attrs: IdentAttrs::Function(already_defined || body.is_some(), global),
+    });
 
     if let Some(block) = body {
         if let Some(params) = parameters {
             for param in params {
-                type_map.add(param, Type::Int, false);
+                symbol_table.add(param, Symbol {
+                  symbol_type: Type::Int,
+                  attrs: IdentAttrs::Local  
+                });
             }
         }
-        typecheck_block(block, type_map)?;
+        typecheck_block(block, symbol_table)?;
     }
 
     Ok(())

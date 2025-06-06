@@ -159,7 +159,7 @@ pub fn generate(ast: &tacky::Tacky) -> Assembly {
     let tacky::Tacky::Program(definitions) = ast;
     let mut functions: FunctionDefinitions = Vec::new();
 
-    for definition in definitions.into_iter() {
+    for definition in definitions {
         let mut function = gen_assembly(definition);
         function = fixup_pseudo(function);
         function = fixup_invalid(function);
