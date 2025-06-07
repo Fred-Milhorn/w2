@@ -77,8 +77,8 @@ pub fn generate(ast: &parse::Ast) -> Result<Tacky> {
             parse::Declaration::FunDecl(function_declaration) => {
                 let definition = gen_function(function_declaration)?;
                 definitions.push(definition);
-            },
-            parse::Declaration::VarDecl(_) => todo!()
+            }
+            parse::Declaration::VarDecl(_) => todo!(),
         }
     }
 
@@ -86,10 +86,10 @@ pub fn generate(ast: &parse::Ast) -> Result<Tacky> {
 }
 
 fn gen_function(declaration: &parse::FunctionDeclaration) -> Result<FunctionDefinition> {
-    let parse::FunctionDeclaration(name, params, body, _) = declaration; 
+    let parse::FunctionDeclaration(name, params, body, _) = declaration;
     let mut instructions: Instructions = Vec::new();
 
-    if let Some(block) = body { 
+    if let Some(block) = body {
         emit_block(block, &mut instructions)?;
     }
 

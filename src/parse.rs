@@ -2,13 +2,13 @@
 //!
 //! Creates an AST from the token list supplied by the lexer.
 
+use anyhow::{anyhow, Result};
+use std::iter::Peekable;
 use std::mem;
 use std::slice::Iter;
-use std::iter::Peekable;
-use anyhow::{anyhow, Result};
 
-use crate::utils::temp_name;
 use crate::lex::{Token, TokenList};
+use crate::utils::temp_name;
 
 pub type Identifier = String;
 pub type Label = String;
@@ -111,7 +111,12 @@ pub struct Specifier {
 pub struct VariableDeclaration(pub Identifier, pub Option<Expression>, pub Option<StorageClass>);
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct FunctionDeclaration(pub Identifier, pub Option<Params>, pub Option<Block>, pub Option<StorageClass>);
+pub struct FunctionDeclaration(
+    pub Identifier,
+    pub Option<Params>,
+    pub Option<Block>,
+    pub Option<StorageClass>,
+);
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Declaration {
@@ -229,7 +234,7 @@ fn parse_parameter_list(tokens: &mut TokenStream) -> Result<Option<Params>> {
 
 fn parse_function_declaration(tokens: &mut TokenStream, name: String, specifier: &Specifier) -> Result<FunctionDeclaration> {
     let optional_params = parse_parameter_list(tokens)?;
-    
+
     let optional_body = match tokens.peek()? {
         Token::Semicolon => {
             tokens.next()?;
@@ -239,7 +244,12 @@ fn parse_function_declaration(tokens: &mut TokenStream, name: String, specifier:
         token => return Err(anyhow!("parse_function_declaration: unexpected token: '{token:?}'")),
     };
 
-    Ok(FunctionDeclaration(name, optional_params, optional_body, specifier.storage_class.clone()))
+    Ok(FunctionDeclaration(
+        name,
+        optional_params,
+        optional_body,
+        specifier.storage_class.clone(),
+    ))
 }
 
 fn parse_type_and_storage_class(tokens: &mut TokenStream) -> Result<Specifier> {
@@ -251,7 +261,7 @@ fn parse_type_and_storage_class(tokens: &mut TokenStream) -> Result<Specifier> {
             Token::Int => types.push(Type::Int),
             Token::Static => storage_classes.push(StorageClass::Static),
             Token::Extern => storage_classes.push(StorageClass::Extern),
-            _ => break
+            _ => break,
         }
         tokens.next()?;
     }
@@ -259,15 +269,18 @@ fn parse_type_and_storage_class(tokens: &mut TokenStream) -> Result<Specifier> {
     if types.len() != 1 {
         return Err(anyhow!("parse_type_and_storage: Invalid type specifier: {:?}", types));
     };
-        
+
     if storage_classes.len() > 1 {
-        return Err(anyhow!("parse_type_and_storage: Invalid storage class: {:?}", storage_classes));
+        return Err(anyhow!(
+            "parse_type_and_storage: Invalid storage class: {:?}",
+            storage_classes
+        ));
     }
 
     let identifier_type = types[0].clone();
     let identifier_storage_class = match storage_classes.len() {
         1 => Some(storage_classes[0].clone()),
-        _ => None
+        _ => None,
     };
 
     Ok(Specifier {
@@ -275,7 +288,7 @@ fn parse_type_and_storage_class(tokens: &mut TokenStream) -> Result<Specifier> {
         storage_class: identifier_storage_class,
     })
 }
-    
+
 fn parse_declaration(tokens: &mut TokenStream) -> Result<Declaration> {
     let specifier = parse_type_and_storage_class(tokens)?;
 
@@ -284,10 +297,10 @@ fn parse_declaration(tokens: &mut TokenStream) -> Result<Declaration> {
             let identifier = name.clone();
             tokens.next()?;
             identifier
-        },
+        }
         token => return Err(anyhow!("parse_declaration: Identifier expected: {token:?}")),
     };
-    
+
     let declaration = match tokens.peek()? {
         Token::OpenParen => Declaration::FunDecl(parse_function_declaration(tokens, identifier, &specifier)?),
         _ => Declaration::VarDecl(parse_variable_declaration(tokens, identifier, &specifier)?),
@@ -423,10 +436,8 @@ fn parse_for_init(tokens: &mut TokenStream) -> Result<ForInit> {
             match declaration {
                 Declaration::FunDecl(_) => {
                     return Err(anyhow!("parse_for_init: Unexpected function declaration: {declaration:?}"));
-                },
-                Declaration::VarDecl(variable_declaration) => {
-                    ForInit::InitDecl(variable_declaration)
                 }
+                Declaration::VarDecl(variable_declaration) => ForInit::InitDecl(variable_declaration),
             }
         }
         _ => {

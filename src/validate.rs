@@ -6,8 +6,8 @@ use anyhow::{anyhow, Result};
 use std::collections::HashMap;
 
 use crate::parse::{
-    Ast, Block, BlockItem, Declaration, Expression, ForInit, FunctionDeclaration, Identifier, Label, Statement, UnaryOperator,
-    VariableDeclaration, StorageClass
+    Ast, Block, BlockItem, Declaration, Expression, ForInit, FunctionDeclaration, Identifier, Label, Statement, StorageClass,
+    UnaryOperator, VariableDeclaration,
 };
 use crate::utils::temp_name;
 
@@ -50,10 +50,7 @@ impl SymbolTable {
     }
 
     fn add(&mut self, name: &str, symbol: Symbol) -> Option<Symbol> {
-        self.0.insert(
-            name.to_string(),
-            symbol,
-        )
+        self.0.insert(name.to_string(), symbol)
     }
 }
 
@@ -87,7 +84,8 @@ impl IdentMap {
     }
 
     fn add(&mut self, name: &str, new_name: &str, from_current_scope: bool, has_linkage: bool) -> Option<MapEntry> {
-        self.0.insert(name.to_string(), MapEntry::new(new_name, from_current_scope, has_linkage))
+        self.0
+            .insert(name.to_string(), MapEntry::new(new_name, from_current_scope, has_linkage))
     }
 
     fn duplicate(&self) -> IdentMap {
@@ -111,7 +109,7 @@ pub fn validate(mut ast: Ast) -> Result<Ast> {
         match declaration {
             Declaration::FunDecl(function_declaration) => {
                 *declaration = Declaration::FunDecl(resolve_function(function_declaration, &mut ident_map)?);
-            },
+            }
             Declaration::VarDecl(variable_declaration) => {
                 resolve_file_scope_variables(variable_declaration, &mut ident_map);
             }
@@ -121,7 +119,7 @@ pub fn validate(mut ast: Ast) -> Result<Ast> {
     // Label all the loops, breaks, continues
     for declaration in declarations.iter_mut() {
         if let Declaration::FunDecl(function_declaration) = declaration {
-                *declaration = Declaration::FunDecl(label_loops(function_declaration, &None)?);
+            *declaration = Declaration::FunDecl(label_loops(function_declaration, &None)?);
         }
     }
 
@@ -130,7 +128,7 @@ pub fn validate(mut ast: Ast) -> Result<Ast> {
         match declaration {
             Declaration::FunDecl(function_declaration) => {
                 typecheck_function(function_declaration, &mut symbol_table)?;
-            },
+            }
             Declaration::VarDecl(variable_declaration) => {
                 typecheck_file_scope_variable(variable_declaration, &mut symbol_table)?;
             }
@@ -189,7 +187,12 @@ fn resolve_function(declaration: &FunctionDeclaration, ident_map: &mut IdentMap)
         None => None,
     };
 
-    Ok(FunctionDeclaration(name.clone(), new_params, new_body, opt_storage_class.clone()))
+    Ok(FunctionDeclaration(
+        name.clone(),
+        new_params,
+        new_body,
+        opt_storage_class.clone(),
+    ))
 }
 
 fn resolve_block(block: &Block, ident_map: &mut IdentMap) -> Result<Block> {
@@ -201,10 +204,10 @@ fn resolve_block(block: &Block, ident_map: &mut IdentMap) -> Result<Block> {
                 Declaration::FunDecl(fundecl) => match fundecl {
                     FunctionDeclaration(name, _, Some(_), _) => {
                         return Err(anyhow!("resolve_block: nested function definitions not allowed: {name:?}"));
-                    },
+                    }
                     FunctionDeclaration(name, _, _, Some(StorageClass::Static)) => {
-                        return Err(anyhow!("resolve_block: function declarations cannot be static: {name:?}"));    
-                    },
+                        return Err(anyhow!("resolve_block: function declarations cannot be static: {name:?}"));
+                    }
                     _ => Declaration::FunDecl(resolve_function(fundecl, ident_map)?),
                 },
                 Declaration::VarDecl(vardecl) => Declaration::VarDecl(resolve_local_variable(vardecl, ident_map)?),
@@ -223,7 +226,9 @@ fn resolve_local_variable(declaration: &VariableDeclaration, ident_map: &mut Ide
     if let Some(entry) = ident_map.get(name) {
         if entry.from_current_scope {
             if !(entry.has_linkage && matches!(opt_storage_class, Some(StorageClass::Extern))) {
-                return Err(anyhow!("resolve_local_variable: conflicting local declarations of variable '{name}'"));
+                return Err(anyhow!(
+                    "resolve_local_variable: conflicting local declarations of variable '{name}'"
+                ));
             }
         }
     }
@@ -232,7 +237,7 @@ fn resolve_local_variable(declaration: &VariableDeclaration, ident_map: &mut Ide
         Some(StorageClass::Extern) => {
             ident_map.add(name, name, true, true);
             Ok(declaration.clone())
-        },
+        }
         _ => {
             let unique_name = temp_name(name);
             ident_map.add(name, &unique_name, true, false);
@@ -458,20 +463,25 @@ fn label_block(block: &Block, label: &Option<Label>) -> Result<Block> {
 fn label_loops(declaration: &FunctionDeclaration, label: &Option<Label>) -> Result<FunctionDeclaration> {
     if let FunctionDeclaration(name, opt_params, Some(body), opt_storage_class) = declaration {
         let new_body = label_block(body, label)?;
-        return Ok(FunctionDeclaration(name.clone(), opt_params.clone(), Some(new_body), opt_storage_class.clone()));
+        return Ok(FunctionDeclaration(
+            name.clone(),
+            opt_params.clone(),
+            Some(new_body),
+            opt_storage_class.clone(),
+        ));
     }
 
     Ok(declaration.clone())
 }
 
-fn typecheck_for_init(for_init: &ForInit, symbol_table : &mut SymbolTable) -> Result<()> {
+fn typecheck_for_init(for_init: &ForInit, symbol_table: &mut SymbolTable) -> Result<()> {
     match for_init {
         ForInit::InitDecl(declaration) => {
             if let VariableDeclaration(name, _, Some(_)) = declaration {
                 return Err(anyhow!("typecheck_for_init: Storage class on for-init not allowed: {name:?}"));
             }
             typecheck_local_variable(declaration, symbol_table)?;
-        },
+        }
         ForInit::InitExp(Some(expression)) => typecheck_expression(expression, symbol_table)?,
         _ => (),
     }
@@ -479,7 +489,7 @@ fn typecheck_for_init(for_init: &ForInit, symbol_table : &mut SymbolTable) -> Re
     Ok(())
 }
 
-fn typecheck_statement(statement: &Statement, symbol_table : &mut SymbolTable) -> Result<()> {
+fn typecheck_statement(statement: &Statement, symbol_table: &mut SymbolTable) -> Result<()> {
     match statement {
         Statement::Return(expression) => {
             typecheck_expression(expression, symbol_table)?;
@@ -506,7 +516,7 @@ fn typecheck_statement(statement: &Statement, symbol_table : &mut SymbolTable) -
         Statement::For(for_init, opt_condition, opt_post, body, _) => {
             typecheck_for_init(for_init, symbol_table)?;
             if let Some(condition) = opt_condition {
-                typecheck_expression(condition, symbol_table )?;
+                typecheck_expression(condition, symbol_table)?;
             }
             if let Some(post) = opt_post {
                 typecheck_expression(post, symbol_table)?;
@@ -597,59 +607,78 @@ fn typecheck_local_variable(declaration: &VariableDeclaration, symbol_table: &mu
     match opt_storage_class {
         Some(StorageClass::Extern) => {
             if init.is_some() {
-                return Err(anyhow!("typecheck_local_variable: Initializer on local extern variable declaration: {name:?}"));
+                return Err(anyhow!(
+                    "typecheck_local_variable: Initializer on local extern variable declaration: {name:?}"
+                ));
             }
             match symbol_table.get(name) {
                 Some(entry) => {
                     if entry.symbol_type != Type::Int {
-                        return Err(anyhow!("typecheck_local_variable: function redeclared as variable: {entry:?}"));
+                        return Err(anyhow!(
+                            "typecheck_local_variable: function redeclared as variable: {entry:?}"
+                        ));
                     }
-                },
+                }
                 None => {
-                    symbol_table.add(name, Symbol {
-                        symbol_type: Type::Int,
-                        attrs: IdentAttrs::Static(InitialValue::NoInitializer, true),
-                    });
+                    symbol_table.add(
+                        name,
+                        Symbol {
+                            symbol_type: Type::Int,
+                            attrs: IdentAttrs::Static(InitialValue::NoInitializer, true),
+                        },
+                    );
                 }
             }
-        },
+        }
         Some(StorageClass::Static) => {
             let initial_value = match init {
-                Some(Expression::Constant(number)) =>  InitialValue::Initial(*number),
+                Some(Expression::Constant(number)) => InitialValue::Initial(*number),
                 None => InitialValue::Initial(0),
-                _ => return Err(anyhow!("typecheck_local_variable: Non-constant initializer on local static variable: {name:?}"))
+                _ => {
+                    return Err(anyhow!(
+                        "typecheck_local_variable: Non-constant initializer on local static variable: {name:?}"
+                    ))
+                }
             };
-            symbol_table.add(name, Symbol {
-                symbol_type: Type::Int,
-                attrs: IdentAttrs::Static(initial_value, false)
-            });
-        },
+            symbol_table.add(
+                name,
+                Symbol {
+                    symbol_type: Type::Int,
+                    attrs: IdentAttrs::Static(initial_value, false),
+                },
+            );
+        }
         _ => {
-            symbol_table.add(name, Symbol {
-                symbol_type: Type::Int,
-                attrs: IdentAttrs::Local
-            });
+            symbol_table.add(
+                name,
+                Symbol {
+                    symbol_type: Type::Int,
+                    attrs: IdentAttrs::Local,
+                },
+            );
 
             if let Some(expression) = init {
                 typecheck_expression(expression, symbol_table)?;
             }
         }
-    }     
+    }
 
     Ok(())
 }
 
-fn typecheck_file_scope_variable(declaration: &VariableDeclaration, symbol_table : &mut SymbolTable) -> Result<()> {
+fn typecheck_file_scope_variable(declaration: &VariableDeclaration, symbol_table: &mut SymbolTable) -> Result<()> {
     let VariableDeclaration(name, init, opt_storage_class) = declaration;
-    
+
     let mut initial_value = match init {
         Some(Expression::Constant(number)) => InitialValue::Initial(*number),
-        None => if matches!(opt_storage_class, Some(StorageClass::Extern)) {
-                    InitialValue::NoInitializer
-                } else {
-                    InitialValue::Tentative
-                },
-        _ => return Err(anyhow!("typecheck_file_scope_variable: non-constant initializer: {init:?}"))
+        None => {
+            if matches!(opt_storage_class, Some(StorageClass::Extern)) {
+                InitialValue::NoInitializer
+            } else {
+                InitialValue::Tentative
+            }
+        }
+        _ => return Err(anyhow!("typecheck_file_scope_variable: non-constant initializer: {init:?}")),
     };
     let mut global = !matches!(opt_storage_class, Some(StorageClass::Static));
 
@@ -666,25 +695,31 @@ fn typecheck_file_scope_variable(declaration: &VariableDeclaration, symbol_table
         if matches!(opt_storage_class, Some(StorageClass::Extern)) {
             global = entry_is_global;
         } else if global != entry_is_global {
-            return Err(anyhow!("typecheck_file_scope_variable: conflicting variable linkage: {entry:?}"));
+            return Err(anyhow!(
+                "typecheck_file_scope_variable: conflicting variable linkage: {entry:?}"
+            ));
         }
         if matches!(entry_initial_value, InitialValue::Initial(_)) {
             if matches!(initial_value, InitialValue::Initial(_)) {
-                return Err(anyhow!("typecheck_file_scope_varuable: conflicting file scope variable definitions: {entry:?}"));
+                return Err(anyhow!(
+                    "typecheck_file_scope_varuable: conflicting file scope variable definitions: {entry:?}"
+                ));
             } else {
                 initial_value = entry_initial_value;
             }
-        } else if !matches!(initial_value, InitialValue::Initial(_)) &&
-                   matches!(entry_initial_value, InitialValue::Tentative) {
+        } else if !matches!(initial_value, InitialValue::Initial(_)) && matches!(entry_initial_value, InitialValue::Tentative) {
             initial_value = InitialValue::Tentative;
         }
     }
 
-    symbol_table.add(name, Symbol {
-        symbol_type: Type::Int,
-        attrs: IdentAttrs::Static(initial_value, global)
-    });
-    
+    symbol_table.add(
+        name,
+        Symbol {
+            symbol_type: Type::Int,
+            attrs: IdentAttrs::Static(initial_value, global),
+        },
+    );
+
     Ok(())
 }
 
@@ -713,18 +748,24 @@ fn typecheck_function(declaration: &FunctionDeclaration, symbol_table: &mut Symb
         global = entry_is_global;
     }
 
-    symbol_table.add(name, Symbol {
-        symbol_type: function_type,
-        attrs: IdentAttrs::Function(already_defined || body.is_some(), global),
-    });
+    symbol_table.add(
+        name,
+        Symbol {
+            symbol_type: function_type,
+            attrs: IdentAttrs::Function(already_defined || body.is_some(), global),
+        },
+    );
 
     if let Some(block) = body {
         if let Some(params) = parameters {
             for param in params {
-                symbol_table.add(param, Symbol {
-                  symbol_type: Type::Int,
-                  attrs: IdentAttrs::Local  
-                });
+                symbol_table.add(
+                    param,
+                    Symbol {
+                        symbol_type: Type::Int,
+                        attrs: IdentAttrs::Local,
+                    },
+                );
             }
         }
         typecheck_block(block, symbol_table)?;
