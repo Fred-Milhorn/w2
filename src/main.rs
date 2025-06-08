@@ -88,7 +88,7 @@ fn run(opts: &Opts, file: &Path) -> Result<()> {
         process::exit(0);
     }
 
-    let validated_ast = validate::validate(ast)?;
+    let (validated_ast, symbol_table) = validate::validate(ast)?;
     if opts.debug {
         println!("validate: {:?}\n", validated_ast);
     }
@@ -96,7 +96,7 @@ fn run(opts: &Opts, file: &Path) -> Result<()> {
         process::exit(0);
     }
 
-    let tacky = tacky::generate(&validated_ast)?;
+    let tacky = tacky::generate(&validated_ast, &symbol_table)?;
     if opts.debug {
         println!("tacky: {:?}\n", tacky);
     }

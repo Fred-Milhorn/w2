@@ -10,6 +10,7 @@
 /target
 /writing-a-c-compiler-tests
 !Makefile
+.DS_Store
 
 *.c
 *.o

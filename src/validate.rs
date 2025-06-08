@@ -12,45 +12,54 @@ use crate::parse::{
 use crate::utils::temp_name;
 
 #[derive(Debug, Clone, PartialEq)]
-enum Type {
+pub enum Type {
     Int,
     FunType(usize),
 }
 
 #[derive(Debug, Clone, PartialEq)]
-enum InitialValue {
+pub enum InitialValue {
     Tentative,
     Initial(i32),
     NoInitializer,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-enum IdentAttrs {
+pub enum IdentAttrs {
     Function(bool, bool),
     Static(InitialValue, bool),
     Local,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-struct Symbol {
-    symbol_type: Type,
-    attrs: IdentAttrs,
+pub struct Symbol {
+    pub symbol_type: Type,
+    pub attrs: IdentAttrs,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-struct SymbolTable(HashMap<Identifier, Symbol>);
+pub struct SymbolTable(HashMap<Identifier, Symbol>);
 
 impl SymbolTable {
     fn new() -> Self {
         Self(HashMap::new())
     }
 
-    fn get(&self, name: &String) -> Option<Symbol> {
+    pub fn get(&self, name: &String) -> Option<Symbol> {
         self.0.get(name).cloned()
     }
 
     fn add(&mut self, name: &str, symbol: Symbol) -> Option<Symbol> {
         self.0.insert(name.to_string(), symbol)
+    }
+}
+
+impl<'a> IntoIterator for &'a SymbolTable {
+    type Item = (&'a Identifier, &'a Symbol); // The item type yielded by the iterator
+    type IntoIter = std::collections::hash_map::Iter<'a, Identifier, Symbol>; // The iterator type
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.iter() // Delegate to the HashMap's iter() method
     }
 }
 
@@ -99,7 +108,7 @@ impl IdentMap {
     }
 }
 
-pub fn validate(mut ast: Ast) -> Result<Ast> {
+pub fn validate(mut ast: Ast) -> Result<(Ast, SymbolTable)> {
     let Ast::Program(ref mut declarations) = ast;
     let mut ident_map = IdentMap::new();
     let mut symbol_table = SymbolTable::new();
@@ -135,7 +144,7 @@ pub fn validate(mut ast: Ast) -> Result<Ast> {
         }
     }
 
-    Ok(ast)
+    Ok((ast, symbol_table))
 }
 
 fn resolve_file_scope_variables(declaration: &VariableDeclaration, ident_map: &mut IdentMap) {

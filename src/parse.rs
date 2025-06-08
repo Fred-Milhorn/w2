@@ -95,13 +95,11 @@ pub enum StorageClass {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-#[allow(dead_code)]
 pub enum Type {
-    Void,
     Int,
 }
 
-#[allow(dead_code)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Specifier {
     type_of: Type,
     storage_class: Option<StorageClass>,

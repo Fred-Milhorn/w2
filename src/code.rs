@@ -156,15 +156,16 @@ impl tacky::Val {
 }
 
 pub fn generate(ast: &tacky::Tacky) -> Assembly {
-    let tacky::Tacky::Program(definitions) = ast;
+    let tacky::Tacky::Program(declarations) = ast;
     let mut functions: FunctionDefinitions = Vec::new();
 
-    for definition in definitions {
-        let mut function = gen_assembly(definition);
-        function = fixup_pseudo(function);
-        function = fixup_invalid(function);
-
-        functions.push(function);
+    for declaration in declarations {
+        if let tacky::Declaration::FunDecl(function_declaration) = declaration {
+            let mut function = gen_assembly(function_declaration);
+            function = fixup_pseudo(function);
+            function = fixup_invalid(function);
+            functions.push(function);
+        }
     }
 
     Assembly::Program(functions)
@@ -214,8 +215,8 @@ fn convert_function_call(name: &String, arguments: &Option<tacky::Args>, dst: &t
     instructions.push(Instruction::Mov(Operand::Reg(Register::AX), dst.convert()));
 }
 
-fn gen_assembly(function: &tacky::FunctionDefinition) -> Function {
-    let tacky::FunctionDefinition(name, parameters, body) = function;
+fn gen_assembly(function: &tacky::Function) -> Function {
+    let tacky::Function(name, _global, parameters, body) = function;
     let mut instructions: Instructions = Vec::new();
 
     if let Some(params) = parameters {

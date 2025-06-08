@@ -4,21 +4,19 @@
 
 use crate::parse;
 use crate::utils::{mklabel, temp_name};
+use crate::validate;
 
 use anyhow::{anyhow, Result};
 
 pub type Identifier = String;
-pub type Instructions = Vec<Instruction>;
-pub type Param = String;
-pub type Params = Vec<Param>;
-pub type Args = Vec<Val>;
-pub type FunctionDefinitions = Vec<FunctionDefinition>;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Val {
     Constant(i32),
     Var(Identifier),
 }
+
+pub type Args = Vec<Val>;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum UnaryOperator {
@@ -60,33 +58,69 @@ pub enum Instruction {
     FunCall(Identifier, Option<Args>, Val),
 }
 
+pub type Instructions = Vec<Instruction>;
+pub type Param = String;
+pub type Params = Vec<Param>;
+
 #[derive(Debug, Clone, PartialEq)]
-pub struct FunctionDefinition(pub Identifier, pub Option<Params>, pub Instructions);
+pub struct Function(pub Identifier, pub bool, pub Option<Params>, pub Instructions);
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct StaticVariable(pub Identifier, pub bool, pub i32);
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum Declaration {
+    FunDecl(Function),
+    VarDecl(StaticVariable),
+}
+
+type TopLevel = Vec<Declaration>;
+type Declarations = Vec<Declaration>;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Tacky {
-    Program(FunctionDefinitions),
+    Program(TopLevel),
 }
 
-pub fn generate(ast: &parse::Ast) -> Result<Tacky> {
+pub fn generate(ast: &parse::Ast, symbol_table: &validate::SymbolTable) -> Result<Tacky> {
     let parse::Ast::Program(declarations) = ast;
-    let mut definitions: FunctionDefinitions = Vec::new();
+    let mut definitions: TopLevel = Vec::new();
 
     for declaration in declarations {
-        match declaration {
-            parse::Declaration::FunDecl(function_declaration) => {
-                let definition = gen_function(function_declaration)?;
-                definitions.push(definition);
-            }
-            parse::Declaration::VarDecl(_) => todo!(),
+        if let parse::Declaration::FunDecl(function_declaration) = declaration {
+            definitions.push(Declaration::FunDecl(gen_function(function_declaration, symbol_table)?));
         }
     }
+
+    let mut static_vars = convert_symbols_to_tacky(symbol_table);
+    definitions.append(&mut static_vars);
 
     Ok(Tacky::Program(definitions))
 }
 
-fn gen_function(declaration: &parse::FunctionDeclaration) -> Result<FunctionDefinition> {
-    let parse::FunctionDeclaration(name, params, body, _) = declaration;
+pub fn convert_symbols_to_tacky(symbol_table: &validate::SymbolTable) -> Declarations {
+    let mut definitions: Declarations = Vec::new();
+
+    for (name, entry) in symbol_table {
+        match &entry.attrs {
+            validate::IdentAttrs::Static(init, global) => match init {
+                validate::InitialValue::Initial(number) => {
+                    definitions.push(Declaration::VarDecl(StaticVariable(name.to_string(), *global, *number)));
+                }
+                validate::InitialValue::Tentative => {
+                    definitions.push(Declaration::VarDecl(StaticVariable(name.to_string(), *global, 0)));
+                }
+                validate::InitialValue::NoInitializer => (),
+            },
+            _ => (),
+        }
+    }
+
+    definitions
+}
+
+fn gen_function(declaration: &parse::FunctionDeclaration, symbol_table: &validate::SymbolTable) -> Result<Function> {
+    let parse::FunctionDeclaration(name, params, body, _storage_class) = declaration;
     let mut instructions: Instructions = Vec::new();
 
     if let Some(block) = body {
@@ -96,7 +130,20 @@ fn gen_function(declaration: &parse::FunctionDeclaration) -> Result<FunctionDefi
     // Patch functions without return
     instructions.push(Instruction::Return(Val::Constant(0)));
 
-    Ok(FunctionDefinition(name.to_string(), params.clone(), instructions))
+    let global = match symbol_table.get(name) {
+        Some(entry) => {
+            if let validate::IdentAttrs::Function(_, global) = entry.attrs {
+                global
+            } else {
+                return Err(anyhow!(
+                    "gen_function: function has unexpected attributes in symbol table: {name:?}"
+                ));
+            }
+        }
+        _ => return Err(anyhow!("gen_function: function missing from symbol table: {name:?}")),
+    };
+
+    Ok(Function(name.to_string(), global, params.clone(), instructions))
 }
 
 fn emit_block(block: &parse::Block, instructions: &mut Instructions) -> Result<()> {
