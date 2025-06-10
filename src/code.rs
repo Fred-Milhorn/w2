@@ -346,6 +346,7 @@ fn gen_assembly(function: &tacky::Function) -> Function {
     Function(name.clone(), *global, 0, instructions)
 }
 
+#[rustfmt::skip]
 fn fixup_pseudo(function: Function, symbol_table: &SymbolTable) -> Function {
     let Function(name, global, _, body) = function;
     let mut instructions: Instructions = Vec::new();
@@ -358,18 +359,17 @@ fn fixup_pseudo(function: Function, symbol_table: &SymbolTable) -> Function {
 
         if let Operand::Pseudo(identifier) = operand {
             match symbol_table.get(&identifier) {
-                Some(Symbol {
-                    attrs: IdentAttrs::Static(_, _),
-                    ..
-                }) => Operand::Data(identifier.to_string()),
+                Some(Symbol { attrs: IdentAttrs::Static(_, _), .. }) => {
+                    Operand::Data(identifier.to_string())
+                }
                 _ => match pseudo_map.get(&identifier) {
-                    Some(offset) => Operand::Stack(*offset),
-                    None => {
-                        *depth -= TMPSIZE;
-                        pseudo_map.insert(identifier, *depth);
-                        Operand::Stack(*depth)
-                    }
-                },
+                        Some(offset) => Operand::Stack(*offset),
+                        None => {
+                            *depth -= TMPSIZE;
+                            pseudo_map.insert(identifier, *depth);
+                            Operand::Stack(*depth)
+                        }
+                    },
             }
         } else {
             operand
@@ -377,30 +377,17 @@ fn fixup_pseudo(function: Function, symbol_table: &SymbolTable) -> Function {
     };
 
     for instruction in body {
-        match instruction {
-            Instruction::Mov(src, dst) => {
-                instructions.push(Instruction::Mov(fixup(src), fixup(dst)));
-            }
-            Instruction::Unary(op, dst) => {
-                instructions.push(Instruction::Unary(op, fixup(dst)));
-            }
-            Instruction::Binary(op, src, dst) => {
-                instructions.push(Instruction::Binary(op, fixup(src), fixup(dst)));
-            }
-            Instruction::Idiv(src) => {
-                instructions.push(Instruction::Idiv(fixup(src)));
-            }
-            Instruction::Cmp(src1, src2) => {
-                instructions.push(Instruction::Cmp(fixup(src1), fixup(src2)));
-            }
-            Instruction::SetCC(op, dst) => {
-                instructions.push(Instruction::SetCC(op, fixup(dst)));
-            }
-            Instruction::Push(src) => {
-                instructions.push(Instruction::Push(fixup(src)));
-            }
-            _ => instructions.push(instruction),
-        }
+        instructions.push (
+            match instruction {
+                Instruction::Mov(src, dst)        => Instruction::Mov(fixup(src), fixup(dst)),
+                Instruction::Unary(op, dst)       => Instruction::Unary(op, fixup(dst)),
+                Instruction::Binary(op, src, dst) => Instruction::Binary(op, fixup(src), fixup(dst)),
+                Instruction::Idiv(src)            => Instruction::Idiv(fixup(src)),
+                Instruction::Cmp(src1, src2)      => Instruction::Cmp(fixup(src1), fixup(src2)),
+                Instruction::SetCC(op, dst)       => Instruction::SetCC(op, fixup(dst)),
+                Instruction::Push(src)            => Instruction::Push(fixup(src)),
+                _                                 => instruction,
+        });
     }
 
     // Now we know that stack depth. insert the stack allocation instruction.
@@ -496,14 +483,15 @@ pub fn emit(assembly: &Assembly) -> Result<String> {
     Ok(code)
 }
 
+#[rustfmt::skip]
 impl Operand {
     fn fixup(&self, size: ByteSize) -> String {
         match self {
             Operand::Reg(register) => REGNAME[*register as usize][size as usize].to_string(),
             Operand::Stack(number) => format!("{number}(%rbp)"),
-            Operand::Imm(number) => format!("${number}"),
-            Operand::Data(name) => format!("_{name}(%rip)"),
-            Operand::Pseudo(_) => panic!(),
+            Operand::Imm(number)   => format!("${number}"),
+            Operand::Data(name)    => format!("_{name}(%rip)"),
+            Operand::Pseudo(_)     => panic!(),
         }
     }
 
@@ -520,14 +508,15 @@ impl Operand {
     }
 }
 
-impl ConditionCode {
+#[rustfmt::skip]
+  impl ConditionCode {
     fn name(&self) -> &str {
         match self {
-            ConditionCode::E => "e",
+            ConditionCode::E  => "e",
             ConditionCode::NE => "ne",
-            ConditionCode::G => "g",
+            ConditionCode::G  => "g",
             ConditionCode::GE => "ge",
-            ConditionCode::L => "l",
+            ConditionCode::L  => "l",
             ConditionCode::LE => "le",
         }
     }
@@ -542,24 +531,25 @@ impl UnaryOperator {
     }
 }
 
+#[rustfmt::skip]
 impl BinaryOperator {
     fn name(&self) -> &str {
         match self {
-            BinaryOperator::Add => "addl",
-            BinaryOperator::Sub => "subl",
-            BinaryOperator::Mult => "imull",
-            BinaryOperator::Leftshift => "sall",
+            BinaryOperator::Add        => "addl",
+            BinaryOperator::Sub        => "subl",
+            BinaryOperator::Mult       => "imull",
+            BinaryOperator::Leftshift  => "sall",
             BinaryOperator::Rightshift => "sarl",
-            BinaryOperator::BitAnd => "andl",
-            BinaryOperator::BitXor => "xorl",
-            BinaryOperator::BitOr => "orl",
+            BinaryOperator::BitAnd     => "andl",
+            BinaryOperator::BitXor     => "xorl",
+            BinaryOperator::BitOr      => "orl",
         }
     }
 }
 
+#[rustfmt::skip]
 fn emit_instruction(code: &mut String, instruction: &Instruction) -> Result<()> {
     match instruction {
-        #[rustfmt::skip]
         Instruction::DeallocateStack(number) => writeln!(code, "    addq    ${number}, %rsp")?,
         Instruction::Push(src)               => writeln!(code, "    push    {}", src.r8b())?,
         Instruction::Call(name)              => writeln!(code, "    call    _{name}")?,
