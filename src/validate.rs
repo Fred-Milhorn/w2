@@ -233,12 +233,10 @@ fn resolve_local_variable(declaration: &VariableDeclaration, ident_map: &mut Ide
     let VariableDeclaration(name, init, opt_storage_class) = declaration;
 
     if let Some(entry) = ident_map.get(name) {
-        if entry.from_current_scope {
-            if !(entry.has_linkage && matches!(opt_storage_class, Some(StorageClass::Extern))) {
-                return Err(anyhow!(
-                    "resolve_local_variable: conflicting local declarations of variable '{name}'"
-                ));
-            }
+        if entry.from_current_scope && !(entry.has_linkage && matches!(opt_storage_class, Some(StorageClass::Extern))) {
+            return Err(anyhow!(
+                "resolve_local_variable: conflicting local declarations of variable '{name}'"
+            ));
         }
     }
 

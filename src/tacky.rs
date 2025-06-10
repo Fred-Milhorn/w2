@@ -102,8 +102,8 @@ pub fn convert_symbols_to_tacky(symbol_table: &validate::SymbolTable) -> Declara
     let mut definitions: Declarations = Vec::new();
 
     for (name, entry) in symbol_table {
-        match &entry.attrs {
-            validate::IdentAttrs::Static(init, global) => match init {
+        if let validate::IdentAttrs::Static(init, global) = &entry.attrs {
+            match init {
                 validate::InitialValue::Initial(number) => {
                     definitions.push(Declaration::VarDecl(StaticVariable(name.to_string(), *global, *number)));
                 }
@@ -111,8 +111,7 @@ pub fn convert_symbols_to_tacky(symbol_table: &validate::SymbolTable) -> Declara
                     definitions.push(Declaration::VarDecl(StaticVariable(name.to_string(), *global, 0)));
                 }
                 validate::InitialValue::NoInitializer => (),
-            },
-            _ => (),
+            }
         }
     }
 

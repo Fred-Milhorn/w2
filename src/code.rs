@@ -123,7 +123,7 @@ pub struct StaticVariable(Identifier, bool, i32);
 #[derive(Debug, Clone, PartialEq)]
 pub enum Definition {
     FunDef(Function),
-    VarDef(StaticVariable)
+    VarDef(StaticVariable),
 }
 
 type TopLevel = Vec<Definition>;
@@ -358,19 +358,18 @@ fn fixup_pseudo(function: Function, symbol_table: &SymbolTable) -> Function {
 
         if let Operand::Pseudo(identifier) = operand {
             match symbol_table.get(&identifier) {
-                Some(Symbol{attrs: IdentAttrs::Static(_,_), ..}) => {
-                   Operand::Data(identifier.to_string()) 
-                }, 
-                _ => {
-                    match pseudo_map.get(&identifier) {
-                        Some(offset) => Operand::Stack(*offset),
-                        None => {
-                            *depth -= TMPSIZE;
-                            pseudo_map.insert(identifier, *depth);
-                            Operand::Stack(*depth)
-                        }
+                Some(Symbol {
+                    attrs: IdentAttrs::Static(_, _),
+                    ..
+                }) => Operand::Data(identifier.to_string()),
+                _ => match pseudo_map.get(&identifier) {
+                    Some(offset) => Operand::Stack(*offset),
+                    None => {
+                        *depth -= TMPSIZE;
+                        pseudo_map.insert(identifier, *depth);
+                        Operand::Stack(*depth)
                     }
-                }
+                },
             }
         } else {
             operand
@@ -426,7 +425,10 @@ fn fixup_invalid(function: Function) -> Function {
                 instructions.push(Instruction::Cmp(Operand::Reg(Register::R10), Operand::Stack(src2_offset)));
             }
             Instruction::Mov(Operand::Data(identifier), Operand::Stack(dst_offset)) => {
-                instructions.push(Instruction::Mov(Operand::Data(identifier.to_string()), Operand::Reg(Register::R10)));
+                instructions.push(Instruction::Mov(
+                    Operand::Data(identifier.to_string()),
+                    Operand::Reg(Register::R10),
+                ));
                 instructions.push(Instruction::Mov(Operand::Reg(Register::R10), Operand::Stack(dst_offset)));
             }
             Instruction::Mov(Operand::Stack(src_offset), Operand::Stack(dst_offset)) => {
@@ -476,16 +478,19 @@ fn fixup_invalid(function: Function) -> Function {
 pub fn emit(assembly: &Assembly) -> Result<String> {
     let mut code = String::new();
 
-    writeln!(&mut code, r#"    .section __TEXT,__text,regular,pure_instructions
+    writeln!(
+        &mut code,
+        r#"    .section __TEXT,__text,regular,pure_instructions
     .build_version macos, 12, 0  sdk_version 12, 2
-    "#)?;
+    "#
+    )?;
 
     let Assembly::Program(definitions) = assembly;
     for definition in definitions {
         match definition {
             Definition::FunDef(function) => emit_function(&mut code, function)?,
-            Definition::VarDef(variable) => emit_static_variable(&mut code, variable)?, 
-         }
+            Definition::VarDef(variable) => emit_static_variable(&mut code, variable)?,
+        }
     }
 
     Ok(code)
@@ -554,6 +559,7 @@ impl BinaryOperator {
 
 fn emit_instruction(code: &mut String, instruction: &Instruction) -> Result<()> {
     match instruction {
+        #[rustfmt::skip]
         Instruction::DeallocateStack(number) => writeln!(code, "    addq    ${number}, %rsp")?,
         Instruction::Push(src)               => writeln!(code, "    push    {}", src.r8b())?,
         Instruction::Call(name)              => writeln!(code, "    call    _{name}")?,
@@ -584,7 +590,7 @@ fn emit_static_variable(code: &mut String, variable: &StaticVariable) -> Result<
     let StaticVariable(name, global, init) = variable;
 
     if *global {
-        writeln!(code, "    .globl   _{name}")?;    
+        writeln!(code, "    .globl   _{name}")?;
     }
     if *init == 0 {
         writeln!(code, "    .bss")?;
@@ -597,7 +603,7 @@ fn emit_static_variable(code: &mut String, variable: &StaticVariable) -> Result<
         writeln!(code, "_{name}:")?;
         writeln!(code, "    .long {init}")?;
     }
-    
+
     Ok(())
 }
 
@@ -605,12 +611,15 @@ fn emit_function(code: &mut String, function: &Function) -> Result<()> {
     let Function(name, global, _stack_size, instructions) = function;
 
     if *global {
-        writeln!(code, "\n    .globl   _{name}")?;    
+        writeln!(code, "\n    .globl   _{name}")?;
     }
-    writeln!(code, r#"    .text
+    writeln!(
+        code,
+        r#"    .text
 _{name}:
     pushq   %rbp
-    movq    %rsp, %rbp"#)?;
+    movq    %rsp, %rbp"#
+    )?;
 
     for instruction in instructions {
         emit_instruction(code, instruction)?;
