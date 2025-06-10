@@ -3,13 +3,14 @@
 //! Generate x86-64 assembly language from the AST created by parser.
 
 use crate::tacky;
+use crate::validate::{IdentAttrs, Symbol, SymbolTable};
+
 use anyhow::Result;
 use std::collections::HashMap;
 use std::fmt::Write as _;
 
 pub type Identifier = String;
 pub type Instructions = Vec<Instruction>;
-pub type FunctionDefinitions = Vec<Function>;
 pub type StackSize = i32;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -63,6 +64,7 @@ pub enum Operand {
     Reg(Register),
     Pseudo(Identifier),
     Stack(i32),
+    Data(Identifier),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -113,11 +115,23 @@ pub enum Instruction {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct Function(Identifier, StackSize, Instructions);
+pub struct Function(Identifier, bool, StackSize, Instructions);
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct StaticVariable(Identifier, bool, i32);
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum Definition {
+    FunDef(Function),
+    VarDef(StaticVariable)
+}
+
+type TopLevel = Vec<Definition>;
+type Definitions = Vec<Definition>;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Assembly {
-    Program(FunctionDefinitions),
+    Program(TopLevel),
 }
 
 impl tacky::UnaryOperator {
@@ -155,20 +169,25 @@ impl tacky::Val {
     }
 }
 
-pub fn generate(ast: &tacky::Tacky) -> Assembly {
+pub fn generate(ast: &tacky::Tacky, symbol_table: &SymbolTable) -> Assembly {
     let tacky::Tacky::Program(declarations) = ast;
-    let mut functions: FunctionDefinitions = Vec::new();
+    let mut definitions: Definitions = Vec::new();
 
     for declaration in declarations {
-        if let tacky::Declaration::FunDecl(function_declaration) = declaration {
-            let mut function = gen_assembly(function_declaration);
-            function = fixup_pseudo(function);
-            function = fixup_invalid(function);
-            functions.push(function);
+        match declaration {
+            tacky::Declaration::FunDecl(function_declaration) => {
+                let mut function = gen_assembly(function_declaration);
+                function = fixup_pseudo(function, symbol_table);
+                function = fixup_invalid(function);
+                definitions.push(Definition::FunDef(function));
+            }
+            tacky::Declaration::VarDecl(tacky::StaticVariable(name, global, init)) => {
+                definitions.push(Definition::VarDef(StaticVariable(name.to_string(), *global, *init)));
+            }
         }
     }
 
-    Assembly::Program(functions)
+    Assembly::Program(definitions)
 }
 
 fn convert_function_call(name: &String, arguments: &Option<tacky::Args>, dst: &tacky::Val, instructions: &mut Instructions) {
@@ -216,7 +235,7 @@ fn convert_function_call(name: &String, arguments: &Option<tacky::Args>, dst: &t
 }
 
 fn gen_assembly(function: &tacky::Function) -> Function {
-    let tacky::Function(name, _global, parameters, body) = function;
+    let tacky::Function(name, global, parameters, body) = function;
     let mut instructions: Instructions = Vec::new();
 
     if let Some(params) = parameters {
@@ -324,11 +343,11 @@ fn gen_assembly(function: &tacky::Function) -> Function {
         }
     }
 
-    Function(name.clone(), 0, instructions)
+    Function(name.clone(), *global, 0, instructions)
 }
 
-fn fixup_pseudo(function: Function) -> Function {
-    let Function(name, _, body) = function;
+fn fixup_pseudo(function: Function, symbol_table: &SymbolTable) -> Function {
+    let Function(name, global, _, body) = function;
     let mut instructions: Instructions = Vec::new();
     let mut pseudo_map: HashMap<String, i32> = HashMap::new();
     let mut stack_depth: i32 = 0;
@@ -337,13 +356,20 @@ fn fixup_pseudo(function: Function) -> Function {
     let mut fixup = |operand: Operand| -> Operand {
         const TMPSIZE: i32 = 4;
 
-        if let Operand::Pseudo(tmp) = operand {
-            match pseudo_map.get(&tmp) {
-                Some(offset) => Operand::Stack(*offset),
-                None => {
-                    *depth -= TMPSIZE;
-                    pseudo_map.insert(tmp, *depth);
-                    Operand::Stack(*depth)
+        if let Operand::Pseudo(identifier) = operand {
+            match symbol_table.get(&identifier) {
+                Some(Symbol{attrs: IdentAttrs::Static(_,_), ..}) => {
+                   Operand::Data(identifier.to_string()) 
+                }, 
+                _ => {
+                    match pseudo_map.get(&identifier) {
+                        Some(offset) => Operand::Stack(*offset),
+                        None => {
+                            *depth -= TMPSIZE;
+                            pseudo_map.insert(identifier, *depth);
+                            Operand::Stack(*depth)
+                        }
+                    }
                 }
             }
         } else {
@@ -382,11 +408,11 @@ fn fixup_pseudo(function: Function) -> Function {
     let stack_size = (stack_depth.abs() / 16) * 16 + 16;
     instructions.insert(0, Instruction::AllocateStack(stack_size));
 
-    Function(name.clone(), stack_size, instructions)
+    Function(name.clone(), global, stack_size, instructions)
 }
 
 fn fixup_invalid(function: Function) -> Function {
-    let Function(name, stack_size, body) = function;
+    let Function(name, global, stack_size, body) = function;
     let mut instructions: Instructions = Vec::new();
 
     for instruction in body.into_iter() {
@@ -398,6 +424,10 @@ fn fixup_invalid(function: Function) -> Function {
             Instruction::Cmp(Operand::Stack(src1_offset), Operand::Stack(src2_offset)) => {
                 instructions.push(Instruction::Mov(Operand::Stack(src1_offset), Operand::Reg(Register::R10)));
                 instructions.push(Instruction::Cmp(Operand::Reg(Register::R10), Operand::Stack(src2_offset)));
+            }
+            Instruction::Mov(Operand::Data(identifier), Operand::Stack(dst_offset)) => {
+                instructions.push(Instruction::Mov(Operand::Data(identifier.to_string()), Operand::Reg(Register::R10)));
+                instructions.push(Instruction::Mov(Operand::Reg(Register::R10), Operand::Stack(dst_offset)));
             }
             Instruction::Mov(Operand::Stack(src_offset), Operand::Stack(dst_offset)) => {
                 instructions.push(Instruction::Mov(Operand::Stack(src_offset), Operand::Reg(Register::R10)));
@@ -440,18 +470,22 @@ fn fixup_invalid(function: Function) -> Function {
         }
     }
 
-    Function(name.clone(), stack_size, instructions)
+    Function(name.clone(), global, stack_size, instructions)
 }
 
 pub fn emit(assembly: &Assembly) -> Result<String> {
     let mut code = String::new();
-    let preamble = "\t.section\t__TEXT,__text,regular,pure_instructions\n\t.build_version macos, 12, 0\tsdk_version 12, 2\n";
 
-    writeln!(&mut code, "{preamble}")?;
+    writeln!(&mut code, r#"    .section __TEXT,__text,regular,pure_instructions
+    .build_version macos, 12, 0  sdk_version 12, 2
+    "#)?;
 
-    let Assembly::Program(functions) = assembly;
-    for function in functions {
-        emit_function(&mut code, function)?;
+    let Assembly::Program(definitions) = assembly;
+    for definition in definitions {
+        match definition {
+            Definition::FunDef(function) => emit_function(&mut code, function)?,
+            Definition::VarDef(variable) => emit_static_variable(&mut code, variable)?, 
+         }
     }
 
     Ok(code)
@@ -463,6 +497,7 @@ impl Operand {
             Operand::Reg(register) => REGNAME[*register as usize][size as usize].to_string(),
             Operand::Stack(number) => format!("{number}(%rbp)"),
             Operand::Imm(number) => format!("${number}"),
+            Operand::Data(name) => format!("_{name}(%rip)"),
             Operand::Pseudo(_) => panic!(),
         }
     }
@@ -519,36 +554,63 @@ impl BinaryOperator {
 
 fn emit_instruction(code: &mut String, instruction: &Instruction) -> Result<()> {
     match instruction {
-        Instruction::DeallocateStack(number) => writeln!(code, "\taddq\t${number}, %rsp")?,
-        Instruction::Push(src) => writeln!(code, "\tpush\t{}", src.r8b())?,
-        Instruction::Call(name) => writeln!(code, "\tcall\t_{name}")?,
-        Instruction::Cmp(src, dst) => writeln!(code, "\tcmpl\t{}, {}", src.r4b(), dst.r4b())?,
-        Instruction::Jmp(label) => writeln!(code, "\tjmp\tL{}", label)?,
-        Instruction::Label(label) => writeln!(code, "L{}:", label)?,
-        Instruction::JmpCC(cc, label) => writeln!(code, "\tj{}\tL{}", cc.name(), label)?,
-        Instruction::SetCC(cc, dst) => writeln!(code, "\tset{}\t{}", cc.name(), dst.r1b())?,
-        Instruction::Mov(src, dst) => writeln!(code, "\tmovl\t{}, {}", src.r4b(), dst.r4b())?,
-        Instruction::Unary(operator, dst) => writeln!(code, "\t{}\t{}", operator.name(), dst.r4b())?,
-        Instruction::AllocateStack(number) => writeln!(code, "\tsubq\t${number}, %rsp")?,
-        Instruction::Ret => writeln!(code, "\tmovq\t%rbp, %rsp\n\tpopq\t%rbp\n\tret")?,
-        Instruction::Cdq => writeln!(code, "\tcdq")?,
-        Instruction::Idiv(dst) => writeln!(code, "\tidivl\t{}", dst.r4b())?,
+        Instruction::DeallocateStack(number) => writeln!(code, "    addq    ${number}, %rsp")?,
+        Instruction::Push(src)               => writeln!(code, "    push    {}", src.r8b())?,
+        Instruction::Call(name)              => writeln!(code, "    call    _{name}")?,
+        Instruction::Cmp(src, dst)           => writeln!(code, "    cmpl    {}, {}", src.r4b(), dst.r4b())?,
+        Instruction::Jmp(label)              => writeln!(code, "    jmp     L{}", label)?,
+        Instruction::Label(label)            => writeln!(code, "L{}:", label)?,
+        Instruction::JmpCC(cc, label)        => writeln!(code, "    j{}     L{}", cc.name(), label)?,
+        Instruction::SetCC(cc, dst)          => writeln!(code, "    set{}   {}", cc.name(), dst.r1b())?,
+        Instruction::Mov(src, dst)           => writeln!(code, "    movl    {}, {}", src.r4b(), dst.r4b())?,
+        Instruction::Unary(operator, dst)    => writeln!(code, "    {}    {}", operator.name(), dst.r4b())?,
+        Instruction::AllocateStack(number)   => writeln!(code, "    subq    ${number}, %rsp")?,
+        Instruction::Ret                     => writeln!(code, "    movq    %rbp, %rsp\n    popq    %rbp\n    ret")?,
+        Instruction::Cdq                     => writeln!(code, "    cdq")?,
+        Instruction::Idiv(dst)               => writeln!(code, "    idivl   {}", dst.r4b())?,
         Instruction::Binary(operator, src, dst) => {
             let src_name = match operator {
                 BinaryOperator::Leftshift | BinaryOperator::Rightshift => src.r1b(),
                 _ => src.r4b(),
             };
-            writeln!(code, "\t{}\t{}, {}", operator.name(), src_name, dst.r4b())?;
+            writeln!(code, "    {}  {}, {}", operator.name(), src_name, dst.r4b())?;
         }
     }
 
     Ok(())
 }
 
-fn emit_function(code: &mut String, function: &Function) -> Result<()> {
-    let Function(name, _stack_size, instructions) = function;
+fn emit_static_variable(code: &mut String, variable: &StaticVariable) -> Result<()> {
+    let StaticVariable(name, global, init) = variable;
 
-    writeln!(code, "\t.global\t_{name}\n_{name}:\n\tpushq\t%rbp\n\tmovq\t%rsp, %rbp")?;
+    if *global {
+        writeln!(code, "    .globl   _{name}")?;    
+    }
+    if *init == 0 {
+        writeln!(code, "    .bss")?;
+        writeln!(code, "    .balign 4")?;
+        writeln!(code, "_{name}:")?;
+        writeln!(code, "    .zero 4")?;
+    } else {
+        writeln!(code, "    .data")?;
+        writeln!(code, "    .balign 4")?;
+        writeln!(code, "_{name}:")?;
+        writeln!(code, "    .long {init}")?;
+    }
+    
+    Ok(())
+}
+
+fn emit_function(code: &mut String, function: &Function) -> Result<()> {
+    let Function(name, global, _stack_size, instructions) = function;
+
+    if *global {
+        writeln!(code, "\n    .globl   _{name}")?;    
+    }
+    writeln!(code, r#"    .text
+_{name}:
+    pushq   %rbp
+    movq    %rsp, %rbp"#)?;
 
     for instruction in instructions {
         emit_instruction(code, instruction)?;

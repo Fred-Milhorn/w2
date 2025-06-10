@@ -104,7 +104,7 @@ fn run(opts: &Opts, file: &Path) -> Result<()> {
         process::exit(0);
     }
 
-    let code = code::generate(&tacky);
+    let code = code::generate(&tacky, &symbol_table);
     if opts.debug {
         println!("code: {:?}\n", code);
     }
@@ -114,7 +114,7 @@ fn run(opts: &Opts, file: &Path) -> Result<()> {
 
     let assembly = code::emit(&code)?;
     if opts.debug {
-        println!("assembly: {assembly}\n");
+        println!("assembly:\n{assembly}\n");
     }
     if opts.emitcode {
         process::exit(0);
