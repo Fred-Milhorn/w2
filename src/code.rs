@@ -357,7 +357,7 @@ fn gen_assembly(function: &tacky::Function) -> Function {
                 .for_each(|instruction| assembly.append(&mut tacky_to_assembly(&instruction)));
 
             Some(assembly)
-    });
+        });
 
     Function(name.clone(), *global, 0, instructions)
 }
@@ -372,17 +372,18 @@ fn fixup_pseudo(function: Function, symbol_table: &SymbolTable) -> Function {
         const TMPSIZE: i32 = 4;
         if let Operand::Pseudo(identifier) = operand {
             match symbol_table.get(&identifier) {
-                Some(Symbol { attrs: IdentAttrs::Static(_, _), .. }) => {
-                    Operand::Data(identifier.to_string())
-                }
+                Some(Symbol {
+                    attrs: IdentAttrs::Static(_, _),
+                    ..
+                }) => Operand::Data(identifier.to_string()),
                 _ => match pseudo_map.get(&identifier) {
-                        Some(offset) => Operand::Stack(*offset),
-                        None => {
-                            *depth -= TMPSIZE;
-                            pseudo_map.insert(identifier, *depth);
-                            Operand::Stack(*depth)
-                        }
-                    },
+                    Some(offset) => Operand::Stack(*offset),
+                    None => {
+                        *depth -= TMPSIZE;
+                        pseudo_map.insert(identifier, *depth);
+                        Operand::Stack(*depth)
+                    }
+                },
             }
         } else {
             operand
@@ -391,21 +392,20 @@ fn fixup_pseudo(function: Function, symbol_table: &SymbolTable) -> Function {
 
     if let Some(block) = body {
         let mut instructions = Instructions::new();
-        
+
         for instruction in block {
-            instructions.push(
-                match instruction {
-                    Instruction::Mov(src, dst)        => Instruction::Mov(fixup(src), fixup(dst)),
-                    Instruction::Unary(op, dst)       => Instruction::Unary(op, fixup(dst)),
-                    Instruction::Binary(op, src, dst) => Instruction::Binary(op, fixup(src), fixup(dst)),
-                    Instruction::Idiv(src)            => Instruction::Idiv(fixup(src)),
-                    Instruction::Cmp(src1, src2)      => Instruction::Cmp(fixup(src1), fixup(src2)),
-                    Instruction::SetCC(op, dst)       => Instruction::SetCC(op, fixup(dst)),
-                    Instruction::Push(src)            => Instruction::Push(fixup(src)),
-                    _                                 => instruction,
-                });
+            instructions.push(match instruction {
+                Instruction::Mov(src, dst) => Instruction::Mov(fixup(src), fixup(dst)),
+                Instruction::Unary(op, dst) => Instruction::Unary(op, fixup(dst)),
+                Instruction::Binary(op, src, dst) => Instruction::Binary(op, fixup(src), fixup(dst)),
+                Instruction::Idiv(src) => Instruction::Idiv(fixup(src)),
+                Instruction::Cmp(src1, src2) => Instruction::Cmp(fixup(src1), fixup(src2)),
+                Instruction::SetCC(op, dst) => Instruction::SetCC(op, fixup(dst)),
+                Instruction::Push(src) => Instruction::Push(fixup(src)),
+                _ => instruction,
+            });
         }
-        
+
         let stack_size = (stack_depth.abs() / 16) * 16 + 16;
         instructions.insert(0, Instruction::AllocateStack(stack_size));
 
@@ -432,11 +432,11 @@ fn fixup_invalid(function: Function) -> Function {
                     instructions.push(Instruction::Cmp(Operand::Reg(Register::R10), Operand::Stack(src2_offset)));
                 }
                 Instruction::Mov(Operand::Stack(src_offset), Operand::Data(identifier)) => {
+                    instructions.push(Instruction::Mov(Operand::Stack(src_offset), Operand::Reg(Register::R10)));
                     instructions.push(Instruction::Mov(
-                        Operand::Stack(src_offset),
                         Operand::Reg(Register::R10),
+                        Operand::Data(identifier.to_string()),
                     ));
-                    instructions.push(Instruction::Mov(Operand::Reg(Register::R10), Operand::Data(identifier.to_string())));
                 }
                 Instruction::Mov(Operand::Data(identifier), Operand::Stack(dst_offset)) => {
                     instructions.push(Instruction::Mov(
@@ -506,7 +506,7 @@ fn fixup_invalid(function: Function) -> Function {
     } else {
         None
     };
-    
+
     Function(name.clone(), global, stack_size, instructions)
 }
 

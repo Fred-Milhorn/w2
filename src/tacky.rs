@@ -128,13 +128,13 @@ fn gen_function(declaration: &parse::FunctionDeclaration, symbol_table: &validat
 
             // Patch functions without return
             if let Some(last) = instructions.last() {
-                if ! matches!(last, Instruction::Return(_)) {
+                if !matches!(last, Instruction::Return(_)) {
                     instructions.push(Instruction::Return(Val::Constant(0)));
                 }
             }
             Some(instructions)
-        },
-        None => None
+        }
+        None => None,
     };
 
     let global = match symbol_table.get(name) {
