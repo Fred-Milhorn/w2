@@ -63,7 +63,7 @@ pub type Param = String;
 pub type Params = Vec<Param>;
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct Function(pub Identifier, pub bool, pub Option<Params>, pub Instructions);
+pub struct Function(pub Identifier, pub bool, pub Option<Params>, pub Option<Instructions>);
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct StaticVariable(pub Identifier, pub bool, pub i32);
@@ -119,15 +119,23 @@ pub fn convert_symbols_to_tacky(symbol_table: &validate::SymbolTable) -> Declara
 }
 
 fn gen_function(declaration: &parse::FunctionDeclaration, symbol_table: &validate::SymbolTable) -> Result<Function> {
-    let parse::FunctionDeclaration(name, params, body, _storage_class) = declaration;
-    let mut instructions: Instructions = Vec::new();
+    let parse::FunctionDeclaration(name, params, opt_body, _storage_class) = declaration;
 
-    if let Some(block) = body {
-        emit_block(block, &mut instructions)?;
-    }
+    let instructions = match opt_body {
+        Some(block) => {
+            let mut instructions: Instructions = Vec::new();
+            emit_block(block, &mut instructions)?;
 
-    // Patch functions without return
-    instructions.push(Instruction::Return(Val::Constant(0)));
+            // Patch functions without return
+            if let Some(last) = instructions.last() {
+                if ! matches!(last, Instruction::Return(_)) {
+                    instructions.push(Instruction::Return(Val::Constant(0)));
+                }
+            }
+            Some(instructions)
+        },
+        None => None
+    };
 
     let global = match symbol_table.get(name) {
         Some(entry) => {
