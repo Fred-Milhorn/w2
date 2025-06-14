@@ -182,6 +182,7 @@ pub fn generate(ast: &tacky::Tacky, symbol_table: &SymbolTable) -> Assembly {
                 let mut function = gen_assembly(function_declaration);
                 function = fixup_pseudo(function, symbol_table);
                 function = fixup_invalid(function);
+                function = allocate_stack(function);
                 definitions.push(Definition::FunDef(function));
             }
             tacky::Declaration::VarDecl(tacky::StaticVariable(name, global, init)) => {
@@ -239,9 +240,10 @@ fn convert_function_call(name: &String, arguments: &Option<tacky::Args>, dst: &t
 
 fn tacky_to_assembly(instruction: &tacky::Instruction) -> Instructions {
     let mut instructions: Instructions = Vec::new();
+
     match instruction {
         tacky::Instruction::FunCall(name, args, dst) => {
-            convert_function_call(&name, &args, &dst, &mut instructions);
+            convert_function_call(name, args, dst, &mut instructions);
         }
         tacky::Instruction::Return(val) => {
             instructions.push(Instruction::Mov(val.convert(), Operand::Reg(Register::AX)));
@@ -326,40 +328,48 @@ fn tacky_to_assembly(instruction: &tacky::Instruction) -> Instructions {
 
 fn gen_assembly(function: &tacky::Function) -> Function {
     let tacky::Function(name, global, parameters, body) = function;
-    let instructions = body
-        .as_ref()
-        .and_then(|instructions: &tacky::Instructions| -> Option<Instructions> {
-            let mut assembly: Instructions = Vec::new();
+    let instructions = body.as_ref().map(|instructions: &tacky::Instructions| -> Instructions {
+        let mut assembly: Instructions = Vec::new();
 
-            if let Some(params) = parameters {
-                let mut ix = 0;
-                while ix < params.len() && ix < STACK_COUNT {
-                    assembly.push(Instruction::Mov(
-                        Operand::Reg(ARG_REGISTERS[ix]),
-                        Operand::Pseudo(params[ix].to_string()),
-                    ));
-                    ix += 1;
-                }
-
-                let mut stack_depth = 16;
-                while ix < params.len() {
-                    assembly.push(Instruction::Mov(
-                        Operand::Stack(stack_depth),
-                        Operand::Pseudo(params[ix].to_string()),
-                    ));
-                    ix += 1;
-                    stack_depth += 8;
-                }
+        if let Some(params) = parameters {
+            let mut ix = 0;
+            while ix < params.len() && ix < STACK_COUNT {
+                assembly.push(Instruction::Mov(
+                    Operand::Reg(ARG_REGISTERS[ix]),
+                    Operand::Pseudo(params[ix].to_string()),
+                ));
+                ix += 1;
             }
 
-            instructions
-                .iter()
-                .for_each(|instruction| assembly.append(&mut tacky_to_assembly(&instruction)));
+            let mut stack_depth = 16;
+            while ix < params.len() {
+                assembly.push(Instruction::Mov(
+                    Operand::Stack(stack_depth),
+                    Operand::Pseudo(params[ix].to_string()),
+                ));
+                ix += 1;
+                stack_depth += 8;
+            }
+        }
 
-            Some(assembly)
-        });
+        instructions
+            .iter()
+            .for_each(|instruction| assembly.append(&mut tacky_to_assembly(instruction)));
+
+        assembly
+    });
 
     Function(name.clone(), *global, 0, instructions)
+}
+
+fn allocate_stack(function: Function) -> Function {
+    match function {
+        Function(name, global, stack_size, Some(mut instructions)) => {
+            instructions.insert(0, Instruction::AllocateStack(stack_size));
+            Function(name, global, stack_size, Some(instructions))
+        }
+        _ => function,
+    }
 }
 
 fn fixup_pseudo(function: Function, symbol_table: &SymbolTable) -> Function {
@@ -368,61 +378,62 @@ fn fixup_pseudo(function: Function, symbol_table: &SymbolTable) -> Function {
     let mut stack_depth: i32 = 0;
     let depth: &mut i32 = &mut stack_depth;
 
-    let mut fixup = |operand: Operand| -> Operand {
+    let mut fixup = |operand: &Operand| -> Operand {
         const TMPSIZE: i32 = 4;
         if let Operand::Pseudo(identifier) = operand {
-            match symbol_table.get(&identifier) {
+            match symbol_table.get(identifier) {
                 Some(Symbol {
                     attrs: IdentAttrs::Static(_, _),
                     ..
                 }) => Operand::Data(identifier.to_string()),
-                _ => match pseudo_map.get(&identifier) {
+                _ => match pseudo_map.get(identifier) {
                     Some(offset) => Operand::Stack(*offset),
                     None => {
                         *depth -= TMPSIZE;
-                        pseudo_map.insert(identifier, *depth);
+                        pseudo_map.insert(identifier.to_string(), *depth);
                         Operand::Stack(*depth)
                     }
                 },
             }
         } else {
-            operand
+            operand.clone()
         }
     };
 
-    if let Some(block) = body {
-        let mut instructions = Instructions::new();
+    let instructions = body.as_ref().map(|block: &Instructions| -> Instructions {
+        let mut assembly = Instructions::new();
 
-        for instruction in block {
-            instructions.push(match instruction {
-                Instruction::Mov(src, dst) => Instruction::Mov(fixup(src), fixup(dst)),
-                Instruction::Unary(op, dst) => Instruction::Unary(op, fixup(dst)),
-                Instruction::Binary(op, src, dst) => Instruction::Binary(op, fixup(src), fixup(dst)),
-                Instruction::Idiv(src) => Instruction::Idiv(fixup(src)),
-                Instruction::Cmp(src1, src2) => Instruction::Cmp(fixup(src1), fixup(src2)),
-                Instruction::SetCC(op, dst) => Instruction::SetCC(op, fixup(dst)),
-                Instruction::Push(src) => Instruction::Push(fixup(src)),
-                _ => instruction,
-            });
-        }
-
-        let stack_size = (stack_depth.abs() / 16) * 16 + 16;
-        instructions.insert(0, Instruction::AllocateStack(stack_size));
-
-        Function(name.clone(), global, stack_size, Some(instructions))
-    } else {
-        Function(name.clone(), global, 0, None)
+        #[rustfmt::skip]
+        block.iter().for_each(|instruction: &Instruction|
+            assembly.push(match instruction {
+                Instruction::Mov(src, dst)        => Instruction::Mov(fixup(src), fixup(dst)),
+                Instruction::Unary(op, dst)       => Instruction::Unary(op.clone(), fixup(dst)),
+                Instruction::Binary(op, src, dst) => Instruction::Binary(op.clone(), fixup(src), fixup(dst)),
+                Instruction::Idiv(src)            => Instruction::Idiv(fixup(src)),
+                Instruction::Cmp(src1, src2)      => Instruction::Cmp(fixup(src1), fixup(src2)),
+                Instruction::SetCC(op, dst)       => Instruction::SetCC(op.clone(), fixup(dst)),
+                Instruction::Push(src)            => Instruction::Push(fixup(src)),
+                _                                 => instruction.clone(),
+            })
+        );
+        assembly
+    });
+    let mut stack_size = 0;
+    if stack_depth < 0 {
+        stack_size = (stack_depth.abs() / 16) * 16 + 16
     }
+
+    Function(name.clone(), global, stack_size, instructions)
 }
 
 fn fixup_invalid(function: Function) -> Function {
     let Function(name, global, stack_size, body) = function;
 
-    let instructions = if let Some(block) = body {
-        let mut instructions: Instructions = Vec::new();
+    let instructions = body.as_ref().map(|block| -> Instructions {
+        let mut instructions = Instructions::new();
 
-        for instruction in block.into_iter() {
-            match instruction {
+        for instruction in block {
+            match instruction.clone() {
                 Instruction::Cmp(src1, Operand::Imm(number)) => {
                     instructions.push(Instruction::Mov(Operand::Imm(number), Operand::Reg(Register::R11)));
                     instructions.push(Instruction::Cmp(src1, Operand::Reg(Register::R11)));
@@ -498,14 +509,12 @@ fn fixup_invalid(function: Function) -> Function {
                         Operand::Data(identifier),
                     ));
                 }
-                _ => instructions.push(instruction),
+                _ => instructions.push(instruction.clone()),
             }
         }
-
-        Some(instructions)
-    } else {
-        None
-    };
+    
+        instructions
+    });
 
     Function(name.clone(), global, stack_size, instructions)
 }
