@@ -6,7 +6,7 @@ use crate::parse;
 use crate::utils::{mklabel, temp_name};
 use crate::validate;
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 
 pub type Identifier = String;
 
@@ -126,11 +126,9 @@ fn gen_function(declaration: &parse::FunctionDeclaration, symbol_table: &validat
             let mut instructions: Instructions = Vec::new();
             emit_block(block, &mut instructions)?;
 
-            // Patch functions without return
-            if let Some(last) = instructions.last() {
-                if !matches!(last, Instruction::Return(_)) {
-                    instructions.push(Instruction::Return(Val::Constant(0)));
-                }
+            // Patch functions without return and/or body
+            if instructions.len() == 0 || !matches!(instructions.last(), Some(Instruction::Return(_))) {
+                instructions.push(Instruction::Return(Val::Constant(0)));
             }
             Some(instructions)
         }
@@ -160,7 +158,7 @@ fn emit_block(block: &parse::Block, instructions: &mut Instructions) -> Result<(
                 emit_statement(statement, instructions)?;
             }
             parse::BlockItem::D(declaration) => {
-                if let parse::Declaration::VarDecl(parse::VariableDeclaration(identifier, Some(expression), _)) = declaration {
+                if let parse::Declaration::VarDecl(parse::VariableDeclaration(identifier, Some(expression), None)) = declaration {
                     let value = emit_tacky(expression, instructions)?;
                     instructions.push(Instruction::Copy(value, Val::Var(identifier.clone())));
                 }

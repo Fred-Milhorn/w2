@@ -364,7 +364,7 @@ fn gen_assembly(function: &tacky::Function) -> Function {
 
 fn allocate_stack(function: Function) -> Function {
     match function {
-        Function(name, global, stack_size, Some(mut instructions)) => {
+        Function(name, global, stack_size, Some(mut instructions)) if stack_size > 0 => {
             instructions.insert(0, Instruction::AllocateStack(stack_size));
             Function(name, global, stack_size, Some(instructions))
         }
@@ -430,89 +430,68 @@ fn fixup_invalid(function: Function) -> Function {
     let Function(name, global, stack_size, body) = function;
 
     let instructions = body.as_ref().map(|block| -> Instructions {
+        macro_rules! invalid {
+            ($src:expr, $dst:expr) => {
+                matches!($src, Operand::Stack(_) | Operand::Data(_)) && matches!($dst, Operand::Stack(_) | Operand::Data(_))
+            };
+        }
         let mut instructions = Instructions::new();
 
         for instruction in block {
-            match instruction.clone() {
-                Instruction::Cmp(src1, Operand::Imm(number)) => {
-                    instructions.push(Instruction::Mov(Operand::Imm(number), Operand::Reg(Register::R11)));
-                    instructions.push(Instruction::Cmp(src1, Operand::Reg(Register::R11)));
+            match instruction {
+                Instruction::Cmp(src, Operand::Imm(number)) => {
+                    instructions.push(Instruction::Mov(Operand::Imm(*number), Operand::Reg(Register::R11)));
+                    instructions.push(Instruction::Cmp(src.clone(), Operand::Reg(Register::R11)));
                 }
-                Instruction::Cmp(Operand::Stack(src1_offset), Operand::Stack(src2_offset)) => {
-                    instructions.push(Instruction::Mov(Operand::Stack(src1_offset), Operand::Reg(Register::R10)));
-                    instructions.push(Instruction::Cmp(Operand::Reg(Register::R10), Operand::Stack(src2_offset)));
+                Instruction::Cmp(src, dst) if invalid!(src, dst) => {
+                    instructions.push(Instruction::Mov(dst.clone(), Operand::Reg(Register::R11)));
+                    instructions.push(Instruction::Cmp(src.clone(), Operand::Reg(Register::R11)));
                 }
-                Instruction::Mov(Operand::Stack(src_offset), Operand::Data(identifier)) => {
-                    instructions.push(Instruction::Mov(Operand::Stack(src_offset), Operand::Reg(Register::R10)));
-                    instructions.push(Instruction::Mov(
-                        Operand::Reg(Register::R10),
-                        Operand::Data(identifier.to_string()),
-                    ));
-                }
-                Instruction::Mov(Operand::Data(identifier), Operand::Stack(dst_offset)) => {
-                    instructions.push(Instruction::Mov(
-                        Operand::Data(identifier.to_string()),
-                        Operand::Reg(Register::R10),
-                    ));
-                    instructions.push(Instruction::Mov(Operand::Reg(Register::R10), Operand::Stack(dst_offset)));
-                }
-                Instruction::Mov(Operand::Stack(src_offset), Operand::Stack(dst_offset)) => {
-                    instructions.push(Instruction::Mov(Operand::Stack(src_offset), Operand::Reg(Register::R10)));
-                    instructions.push(Instruction::Mov(Operand::Reg(Register::R10), Operand::Stack(dst_offset)));
+                Instruction::Mov(src, dst) if invalid!(src, dst) => {
+                    instructions.push(Instruction::Mov(src.clone(), Operand::Reg(Register::R10)));
+                    instructions.push(Instruction::Mov(Operand::Reg(Register::R10), dst.clone()));
                 }
                 Instruction::Idiv(Operand::Imm(number)) => {
-                    instructions.push(Instruction::Mov(Operand::Imm(number), Operand::Reg(Register::R10)));
+                    instructions.push(Instruction::Mov(Operand::Imm(*number), Operand::Reg(Register::R10)));
                     instructions.push(Instruction::Idiv(Operand::Reg(Register::R10)));
                 }
-                Instruction::Binary(BinaryOperator::Mult, src, Operand::Stack(dst_offset)) => {
-                    instructions.push(Instruction::Mov(Operand::Stack(dst_offset), Operand::Reg(Register::R11)));
-                    instructions.push(Instruction::Binary(BinaryOperator::Mult, src, Operand::Reg(Register::R11)));
-                    instructions.push(Instruction::Mov(Operand::Reg(Register::R11), Operand::Stack(dst_offset)));
+                Instruction::Binary(BinaryOperator::Mult, src, dst) => {
+                    instructions.push(Instruction::Mov(dst.clone(), Operand::Reg(Register::R11)));
+                    instructions.push(Instruction::Binary(
+                        BinaryOperator::Mult,
+                        src.clone(),
+                        Operand::Reg(Register::R11),
+                    ));
+                    instructions.push(Instruction::Mov(Operand::Reg(Register::R11), dst.clone()));
                 }
-                Instruction::Binary(BinaryOperator::Leftshift, Operand::Stack(src_offset), Operand::Stack(dst_offset)) => {
-                    instructions.push(Instruction::Mov(Operand::Stack(src_offset), Operand::Reg(Register::CX)));
+                Instruction::Binary(BinaryOperator::Leftshift, src, dst) if invalid!(src, dst) => {
+                    instructions.push(Instruction::Mov(src.clone(), Operand::Reg(Register::CX)));
                     instructions.push(Instruction::Binary(
                         BinaryOperator::Leftshift,
                         Operand::Reg(Register::CX),
-                        Operand::Stack(dst_offset),
+                        dst.clone(),
                     ));
                 }
-                Instruction::Binary(BinaryOperator::Rightshift, Operand::Stack(src_offset), Operand::Stack(dst_offset)) => {
-                    instructions.push(Instruction::Mov(Operand::Stack(src_offset), Operand::Reg(Register::CX)));
+                Instruction::Binary(BinaryOperator::Rightshift, src, dst) if invalid!(src, dst) => {
+                    instructions.push(Instruction::Mov(src.clone(), Operand::Reg(Register::CX)));
                     instructions.push(Instruction::Binary(
                         BinaryOperator::Rightshift,
                         Operand::Reg(Register::CX),
-                        Operand::Stack(dst_offset),
+                        dst.clone(),
                     ));
                 }
-                Instruction::Binary(operator, Operand::Stack(src_offset), Operand::Stack(dst_offset)) => {
-                    instructions.push(Instruction::Mov(Operand::Stack(src_offset), Operand::Reg(Register::R10)));
+                Instruction::Binary(operator, src, dst) if invalid!(src, dst) => {
+                    instructions.push(Instruction::Mov(src.clone(), Operand::Reg(Register::R10)));
                     instructions.push(Instruction::Binary(
-                        operator,
+                        operator.clone(),
                         Operand::Reg(Register::R10),
-                        Operand::Stack(dst_offset),
-                    ));
-                }
-                Instruction::Binary(operator, Operand::Data(identifier), Operand::Stack(dst_offset)) => {
-                    instructions.push(Instruction::Mov(Operand::Data(identifier), Operand::Reg(Register::R10)));
-                    instructions.push(Instruction::Binary(
-                        operator,
-                        Operand::Reg(Register::R10),
-                        Operand::Stack(dst_offset),
-                    ));
-                }
-                Instruction::Binary(operator, Operand::Stack(src_offset), Operand::Data(identifier)) => {
-                    instructions.push(Instruction::Mov(Operand::Stack(src_offset), Operand::Reg(Register::R10)));
-                    instructions.push(Instruction::Binary(
-                        operator,
-                        Operand::Reg(Register::R10),
-                        Operand::Data(identifier),
+                        dst.clone(),
                     ));
                 }
                 _ => instructions.push(instruction.clone()),
             }
         }
-    
+
         instructions
     });
 
