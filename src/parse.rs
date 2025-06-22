@@ -2,7 +2,7 @@
 //!
 //! Creates an AST from the token list supplied by the lexer.
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use std::iter::Peekable;
 use std::mem;
 use std::slice::Iter;
@@ -13,7 +13,7 @@ use crate::utils::temp_name;
 pub type Identifier = String;
 pub type Label = String;
 pub type Block = Vec<BlockItem>;
-pub type Params = Vec<Identifier>;
+pub type Parameters = Vec<Parameter>;
 pub type FunctionArgs = Vec<Expression>;
 pub type Declarations = Vec<Declaration>;
 
@@ -51,15 +51,22 @@ pub enum BinaryOperator {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub enum Const {
+    ConstInt(i32),
+    ConstLong(i64),
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub enum Expression {
-    Constant(i32),
-    Var(Identifier),
-    Unary(UnaryOperator, Box<Expression>),
-    Binary(BinaryOperator, Box<Expression>, Box<Expression>),
-    Assignment(Box<Expression>, Box<Expression>),
-    CompoundAssignment(BinaryOperator, Box<Expression>, Box<Expression>),
-    Conditional(Box<Expression>, Box<Expression>, Box<Expression>),
-    FunctionCall(Identifier, Option<FunctionArgs>),
+    Constant(Const, Type),
+    Var(Identifier, Type),
+    Cast(Type, Box<Expression>, Type),
+    Unary(UnaryOperator, Box<Expression>, Type),
+    Binary(BinaryOperator, Box<Expression>, Box<Expression>, Type),
+    Assignment(Box<Expression>, Box<Expression>, Type),
+    CompoundAssignment(BinaryOperator, Box<Expression>, Box<Expression>, Type),
+    Conditional(Box<Expression>, Box<Expression>, Box<Expression>, Type),
+    FunctionCall(Identifier, Option<FunctionArgs>, Type),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -85,7 +92,7 @@ pub enum Statement {
     While(Expression, Box<Statement>, Label),
     DoWhile(Box<Statement>, Expression, Label),
     For(ForInit, Option<Expression>, Option<Expression>, Box<Statement>, Label),
-    Null,
+    None,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -94,9 +101,15 @@ pub enum StorageClass {
     Extern,
 }
 
+type ParameterTypes = Vec<Box<Type>>;
+type ReturnType = Box<Type>;
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Type {
     Int,
+    Long,
+    FunType(ParameterTypes, ReturnType),
+    None,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -106,13 +119,20 @@ pub struct Specifier {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct VariableDeclaration(pub Identifier, pub Option<Expression>, pub Option<StorageClass>);
+pub struct Parameter {
+    pub name: String,
+    pub type_of: Type,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct VariableDeclaration(pub Identifier, pub Option<Expression>, pub Type, pub Option<StorageClass>);
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct FunctionDeclaration(
     pub Identifier,
-    pub Option<Params>,
+    pub Option<Parameters>,
     pub Option<Block>,
+    pub Type,
     pub Option<StorageClass>,
 );
 
@@ -188,7 +208,12 @@ fn parse_variable_declaration(tokens: &mut TokenStream, name: String, specifier:
         token => return Err(anyhow!("parse_variable_declaration: unexpected token: '{token:?}'")),
     };
 
-    Ok(VariableDeclaration(name, expression, specifier.storage_class.clone()))
+    Ok(VariableDeclaration(
+        name,
+        expression,
+        specifier.type_of.clone(),
+        specifier.storage_class.clone(),
+    ))
 }
 
 fn parse_parameter(tokens: &mut TokenStream) -> Result<Identifier> {
@@ -201,15 +226,25 @@ fn parse_parameter(tokens: &mut TokenStream) -> Result<Identifier> {
     Ok(identifier)
 }
 
-fn parse_parameter_list(tokens: &mut TokenStream) -> Result<Option<Params>> {
-    let mut params = Vec::<Identifier>::new();
+fn parse_parameter_list(tokens: &mut TokenStream) -> Result<Option<Parameters>> {
+    let mut params = Parameters::new();
 
     tokens.expect(Token::OpenParen)?;
     while *tokens.peek()? != Token::CloseParen {
         match tokens.peek()? {
             Token::Int => {
                 let param = parse_parameter(tokens)?;
-                params.push(param);
+                params.push(Parameter {
+                    name: param,
+                    type_of: Type::Int,
+                });
+            }
+            Token::Long => {
+                let param = parse_parameter(tokens)?;
+                params.push(Parameter {
+                    name: param,
+                    type_of: Type::Long,
+                });
             }
             Token::Comma => {
                 tokens.next()?;
@@ -242,12 +277,54 @@ fn parse_function_declaration(tokens: &mut TokenStream, name: String, specifier:
         token => return Err(anyhow!("parse_function_declaration: unexpected token: '{token:?}'")),
     };
 
+    let param_types = {
+        let mut types: Vec<Box<Type>> = Vec::new();
+        if let Some(ref parameters) = optional_params {
+            for param in parameters {
+                types.push(Box::new(param.type_of.clone()));
+            }
+        }
+        types
+    };
+    let function_type = Type::FunType(param_types, Box::new(specifier.type_of.clone()));
+
     Ok(FunctionDeclaration(
         name,
         optional_params,
         optional_body,
+        function_type,
         specifier.storage_class.clone(),
     ))
+}
+
+fn parse_constant(token: &Token) -> Result<Const> {
+    let number = match token {
+        Token::Constant(value) => {
+            let number: i64 = value.parse()?;
+            if number <= (2 ^ 31 - 1) {
+                Const::ConstInt(number as i32)
+            } else {
+                Const::ConstLong(number)
+            }
+        }
+        Token::LConstant(value) => {
+            let number: i64 = value.parse()?;
+            Const::ConstLong(number)
+        }
+        _ => return Err(anyhow!("parse_constant: unexpected token while parsing constant: {token:?}")),
+    };
+
+    Ok(number)
+}
+
+fn parse_type(specifiers: &Vec<Type>) -> Result<Type> {
+    let parsed_type = match specifiers[..] {
+        [Type::Int] => Type::Int,
+        [Type::Long] | [Type::Long, Type::Int] | [Type::Int, Type::Long] => Type::Long,
+        _ => return Err(anyhow!("parse_type: Unrecognized type specifiers: {specifiers:?}")),
+    };
+
+    Ok(parsed_type)
 }
 
 fn parse_type_and_storage_class(tokens: &mut TokenStream) -> Result<Specifier> {
@@ -257,6 +334,7 @@ fn parse_type_and_storage_class(tokens: &mut TokenStream) -> Result<Specifier> {
     loop {
         match tokens.peek()? {
             Token::Int => types.push(Type::Int),
+            Token::Long => types.push(Type::Long),
             Token::Static => storage_classes.push(StorageClass::Static),
             Token::Extern => storage_classes.push(StorageClass::Extern),
             _ => break,
@@ -264,9 +342,7 @@ fn parse_type_and_storage_class(tokens: &mut TokenStream) -> Result<Specifier> {
         tokens.next()?;
     }
 
-    if types.len() != 1 {
-        return Err(anyhow!("parse_type_and_storage: Invalid type specifier: {:?}", types));
-    };
+    let identifier_type = parse_type(&types)?;
 
     if storage_classes.len() > 1 {
         return Err(anyhow!(
@@ -275,7 +351,6 @@ fn parse_type_and_storage_class(tokens: &mut TokenStream) -> Result<Specifier> {
         ));
     }
 
-    let identifier_type = types[0].clone();
     let identifier_storage_class = match storage_classes.len() {
         1 => Some(storage_classes[0].clone()),
         _ => None,
@@ -331,7 +406,7 @@ fn parse_block(tokens: &mut TokenStream) -> Result<Block> {
 
 fn parse_null(tokens: &mut TokenStream) -> Result<Statement> {
     tokens.expect(Token::Semicolon)?;
-    Ok(Statement::Null)
+    Ok(Statement::None)
 }
 
 fn parse_return(tokens: &mut TokenStream) -> Result<Statement> {
@@ -447,36 +522,37 @@ fn parse_for_init(tokens: &mut TokenStream) -> Result<ForInit> {
     Ok(for_init)
 }
 
+#[rustfmt::skip]
 fn parse_binary(tokens: &mut TokenStream) -> Result<BinaryOperator> {
     let token = tokens.next()?;
     let operator = match token {
-        Token::Multiply => BinaryOperator::Multiply,
-        Token::Divide => BinaryOperator::Divide,
-        Token::Remainder => BinaryOperator::Remainder,
-        Token::Plus => BinaryOperator::Plus,
-        Token::Minus => BinaryOperator::Minus,
-        Token::Leftshift => BinaryOperator::Leftshift,
-        Token::Rightshift => BinaryOperator::Rightshift,
-        Token::BitAnd => BinaryOperator::BitAnd,
-        Token::BitOr => BinaryOperator::BitOr,
-        Token::BitXor => BinaryOperator::BitXor,
-        Token::And => BinaryOperator::And,
-        Token::Or => BinaryOperator::Or,
-        Token::Equal => BinaryOperator::Equal,
-        Token::NotEqual => BinaryOperator::NotEqual,
-        Token::LessThan => BinaryOperator::LessThan,
-        Token::LessOrEqual => BinaryOperator::LessOrEqual,
-        Token::GreaterThan => BinaryOperator::GreaterThan,
-        Token::GreaterOrEqual => BinaryOperator::GreaterOrEqual,
-        Token::PlusAssign => BinaryOperator::Plus,
-        Token::MinusAssign => BinaryOperator::Minus,
-        Token::MultiplyAssign => BinaryOperator::Multiply,
-        Token::DivideAssign => BinaryOperator::Divide,
-        Token::RemainderAssign => BinaryOperator::Remainder,
-        Token::BitAndAssign => BinaryOperator::BitAnd,
-        Token::BitOrAssign => BinaryOperator::BitOr,
-        Token::BitXorAssign => BinaryOperator::BitXor,
-        Token::LeftshiftAssign => BinaryOperator::Leftshift,
+        Token::Multiply         => BinaryOperator::Multiply,
+        Token::Divide           => BinaryOperator::Divide,
+        Token::Remainder        => BinaryOperator::Remainder,
+        Token::Plus             => BinaryOperator::Plus,
+        Token::Minus            => BinaryOperator::Minus,
+        Token::Leftshift        => BinaryOperator::Leftshift,
+        Token::Rightshift       => BinaryOperator::Rightshift,
+        Token::BitAnd           => BinaryOperator::BitAnd,
+        Token::BitOr            => BinaryOperator::BitOr,
+        Token::BitXor           => BinaryOperator::BitXor,
+        Token::And              => BinaryOperator::And,
+        Token::Or               => BinaryOperator::Or,
+        Token::Equal            => BinaryOperator::Equal,
+        Token::NotEqual         => BinaryOperator::NotEqual,
+        Token::LessThan         => BinaryOperator::LessThan,
+        Token::LessOrEqual      => BinaryOperator::LessOrEqual,
+        Token::GreaterThan      => BinaryOperator::GreaterThan,
+        Token::GreaterOrEqual   => BinaryOperator::GreaterOrEqual,
+        Token::PlusAssign       => BinaryOperator::Plus,
+        Token::MinusAssign      => BinaryOperator::Minus,
+        Token::MultiplyAssign   => BinaryOperator::Multiply,
+        Token::DivideAssign     => BinaryOperator::Divide,
+        Token::RemainderAssign  => BinaryOperator::Remainder,
+        Token::BitAndAssign     => BinaryOperator::BitAnd,
+        Token::BitOrAssign      => BinaryOperator::BitOr,
+        Token::BitXorAssign     => BinaryOperator::BitXor,
+        Token::LeftshiftAssign  => BinaryOperator::Leftshift,
         Token::RightshiftAssign => BinaryOperator::Rightshift,
         _ => return Err(anyhow!("Unexpected token for binary operator {token:?}")),
     };
@@ -522,23 +598,23 @@ fn parse_expression(tokens: &mut TokenStream, min_precedence: i32) -> Result<Exp
     while (token.is_binary_operator() || token.is_inc_dec()) && token.precedence() >= min_precedence {
         left = if token.is_inc_dec() {
             let operator = parse_inc_dec(tokens)?;
-            Expression::Unary(operator, Box::new(left))
+            Expression::Unary(operator, Box::new(left), Type::None)
         } else if token == Token::Assignment {
             tokens.next()?;
             let right = parse_expression(tokens, token.precedence())?;
-            Expression::Assignment(Box::new(left), Box::new(right))
+            Expression::Assignment(Box::new(left), Box::new(right), Type::None)
         } else if token.is_compound_assignment() {
             let operator = parse_binary(tokens)?;
             let right = parse_expression(tokens, token.precedence())?;
-            Expression::CompoundAssignment(operator, Box::new(left), Box::new(right))
+            Expression::CompoundAssignment(operator, Box::new(left), Box::new(right), Type::None)
         } else if token == Token::QuestionMark {
             let middle = parse_conditional_middle(tokens)?;
             let right = parse_expression(tokens, token.precedence())?;
-            Expression::Conditional(Box::new(left), Box::new(middle), Box::new(right))
+            Expression::Conditional(Box::new(left), Box::new(middle), Box::new(right), Type::None)
         } else {
             let operator = parse_binary(tokens)?;
             let right = parse_expression(tokens, token.precedence() + 1)?;
-            Expression::Binary(operator, Box::new(left), Box::new(right))
+            Expression::Binary(operator, Box::new(left), Box::new(right), Type::None)
         };
         token = tokens.peek()?.clone();
     }
@@ -567,43 +643,55 @@ fn parse_function_call(tokens: &mut TokenStream, name: &String) -> Result<Expres
         _ => Some(argument_list),
     };
 
-    Ok(Expression::FunctionCall(name.to_string(), arguments))
+    Ok(Expression::FunctionCall(name.to_string(), arguments, Type::None))
 }
 
 fn parse_factor(tokens: &mut TokenStream) -> Result<Expression> {
     let expression = match tokens.peek()?.clone() {
-        Token::Constant(number) => {
+        token @ Token::Constant(_) => {
             tokens.next()?;
-            Expression::Constant(number)
+            let number = parse_constant(&token)?;
+            Expression::Constant(number, Type::None)
         }
         Token::Increment => {
             tokens.next()?;
             let rhs = parse_factor(tokens)?;
-            Expression::Unary(UnaryOperator::PreIncrement, Box::new(rhs))
+            Expression::Unary(UnaryOperator::PreIncrement, Box::new(rhs), Type::None)
         }
         Token::Decrement => {
             tokens.next()?;
             let rhs = parse_factor(tokens)?;
-            Expression::Unary(UnaryOperator::PreDecrement, Box::new(rhs))
+            Expression::Unary(UnaryOperator::PreDecrement, Box::new(rhs), Type::None)
         }
         Token::Identifier(name) => {
             tokens.next()?;
             match tokens.peek()? {
                 Token::OpenParen => parse_function_call(tokens, &name)?,
-                _ => Expression::Var(name),
+                _ => Expression::Var(name, Type::None),
             }
         }
         Token::Complement | Token::Minus | Token::Not => {
             let operator = parse_unary(tokens)?;
             let inner_expression = parse_factor(tokens)?;
-            Expression::Unary(operator, Box::new(inner_expression))
+            Expression::Unary(operator, Box::new(inner_expression), Type::None)
         }
-        Token::OpenParen => {
-            tokens.next()?;
-            let inner_expression = parse_expression(tokens, 0)?;
-            tokens.expect(Token::CloseParen)?;
-            inner_expression
-        }
+        Token::OpenParen => match tokens.next()? {
+            Token::Int => {
+                let inner_expression = parse_factor(tokens)?;
+                tokens.expect(Token::CloseParen)?;
+                Expression::Cast(Type::Int, Box::new(inner_expression), Type::None)
+            }
+            Token::Long => {
+                let inner_expression = parse_factor(tokens)?;
+                tokens.expect(Token::CloseParen)?;
+                Expression::Cast(Type::Long, Box::new(inner_expression), Type::None)
+            }
+            _ => {
+                let inner_expression = parse_expression(tokens, 0)?;
+                tokens.expect(Token::CloseParen)?;
+                inner_expression
+            }
+        },
         token => return Err(anyhow!("parse_expression: Unexpected token: '{token:?}'")),
     };
 

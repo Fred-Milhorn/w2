@@ -1,6 +1,6 @@
 //! lex.rs - Lexer for the w2 tiny C compiler
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use once_cell::sync::Lazy;
 use regex::Regex;
 
@@ -8,12 +8,14 @@ use regex::Regex;
 pub enum Token {
     Eot,
     Identifier(String),
-    Constant(i32),
+    Constant(String),
+    LConstant(String),
     If,
     Else,
     QuestionMark,
     Colon,
     Int,
+    Long,
     Void,
     Return,
     OpenParen,
@@ -66,40 +68,41 @@ pub enum Token {
 
 pub type TokenList = Vec<Token>;
 
+#[rustfmt::skip]
 impl Token {
     pub fn precedence(&self) -> i32 {
         match self {
-            Token::Increment => 0,
-            Token::Decrement => 0,
-            Token::Multiply => 50,
-            Token::Divide => 50,
-            Token::Remainder => 50,
-            Token::Plus => 45,
-            Token::Minus => 45,
-            Token::Leftshift => 40,
-            Token::Rightshift => 40,
-            Token::LessThan => 35,
-            Token::LessOrEqual => 35,
-            Token::GreaterThan => 35,
-            Token::GreaterOrEqual => 35,
-            Token::Equal => 30,
-            Token::NotEqual => 30,
-            Token::BitAnd => 29,
-            Token::BitXor => 28,
-            Token::BitOr => 27,
-            Token::And => 10,
-            Token::Or => 5,
-            Token::QuestionMark => 3,
-            Token::Assignment => 1,
-            Token::PlusAssign => 1,
-            Token::MinusAssign => 1,
-            Token::MultiplyAssign => 1,
-            Token::DivideAssign => 1,
-            Token::RemainderAssign => 1,
-            Token::BitAndAssign => 1,
-            Token::BitOrAssign => 1,
-            Token::BitXorAssign => 1,
-            Token::LeftshiftAssign => 1,
+            Token::Increment        => 0,
+            Token::Decrement        => 0,
+            Token::Multiply         => 50,
+            Token::Divide           => 50,
+            Token::Remainder        => 50,
+            Token::Plus             => 45,
+            Token::Minus            => 45,
+            Token::Leftshift        => 40,
+            Token::Rightshift       => 40,
+            Token::LessThan         => 35,
+            Token::LessOrEqual      => 35,
+            Token::GreaterThan      => 35,
+            Token::GreaterOrEqual   => 35,
+            Token::Equal            => 30,
+            Token::NotEqual         => 30,
+            Token::BitAnd           => 29,
+            Token::BitXor           => 28,
+            Token::BitOr            => 27,
+            Token::And              => 10,
+            Token::Or               => 5,
+            Token::QuestionMark     => 3,
+            Token::Assignment       => 1,
+            Token::PlusAssign       => 1,
+            Token::MinusAssign      => 1,
+            Token::MultiplyAssign   => 1,
+            Token::DivideAssign     => 1,
+            Token::RemainderAssign  => 1,
+            Token::BitAndAssign     => 1,
+            Token::BitOrAssign      => 1,
+            Token::BitXorAssign     => 1,
+            Token::LeftshiftAssign  => 1,
             Token::RightshiftAssign => 1,
             _ => 0,
         }
@@ -162,10 +165,12 @@ impl Token {
     }
 }
 
+#[rustfmt::skip]
 /// Create a list of tokens lexed from the c source
 pub fn lex(input: &str) -> Result<TokenList> {
     static RE_IDENTIFIER: Lazy<Regex> = Lazy::new(|| Regex::new(r"^[a-zA-Z_]\w*\b").unwrap());
-    static RE_CONSTANT: Lazy<Regex> = Lazy::new(|| Regex::new(r"^[0-9]+\b").unwrap());
+    static RE_LCONSTANT : Lazy<Regex> = Lazy::new(|| Regex::new(r"(^[0-9]+)[lL]\b").unwrap());
+    static RE_CONSTANT  : Lazy<Regex> = Lazy::new(|| Regex::new(r"^[0-9]+\b").unwrap());
     static RE_SEPARATORS: Lazy<Regex> = Lazy::new(|| Regex::new(r"^[\,\{\}\(\)\;\?\:]").unwrap());
     static RE_OPERATORS1: Lazy<Regex> = Lazy::new(|| Regex::new(r"^\+=|^\-=|^\*=|^/=|^\%=|^\&=|^\|=|^\^=|^<<=|^>>=").unwrap());
     static RE_OPERATORS2: Lazy<Regex> = Lazy::new(|| Regex::new(r"^\-\-|^\+\+|^&&|^<<|^>>|^\|\||^==|^!=|^<=|^>=").unwrap());
@@ -185,23 +190,28 @@ pub fn lex(input: &str) -> Result<TokenList> {
         let (token, length) = {
             if let Some(matched) = RE_IDENTIFIER.find(source) {
                 let token = match matched.as_str() {
-                    "if" => Token::If,
-                    "else" => Token::Else,
-                    "int" => Token::Int,
-                    "void" => Token::Void,
-                    "return" => Token::Return,
-                    "do" => Token::Do,
-                    "while" => Token::While,
-                    "for" => Token::For,
-                    "break" => Token::Break,
+                    "if"       => Token::If,
+                    "else"     => Token::Else,
+                    "int"      => Token::Int,
+                    "long"     => Token::Long,
+                    "void"     => Token::Void,
+                    "return"   => Token::Return,
+                    "do"       => Token::Do,
+                    "while"    => Token::While,
+                    "for"      => Token::For,
+                    "break"    => Token::Break,
                     "continue" => Token::Continue,
-                    "static" => Token::Static,
-                    "extern" => Token::Extern,
+                    "static"   => Token::Static,
+                    "extern"   => Token::Extern,
                     name => Token::Identifier(name.to_string()),
                 };
                 (token, matched.len())
+            } else if let Some(matched) = RE_LCONSTANT.captures(source) {
+                let number = matched.get(1).unwrap().as_str().to_string();
+                let token = Token::LConstant(number);
+                (token, matched.len())
             } else if let Some(matched) = RE_CONSTANT.find(source) {
-                let number: i32 = matched.as_str().parse()?;
+                let number = matched.as_str().to_string();
                 let token = Token::Constant(number);
                 (token, matched.len())
             } else if let Some(matched) = RE_SEPARATORS.find(source) {
@@ -219,14 +229,14 @@ pub fn lex(input: &str) -> Result<TokenList> {
                 (token, matched.len())
             } else if let Some(matched) = RE_OPERATORS1.find(source) {
                 let token = match matched.as_str() {
-                    "+=" => Token::PlusAssign,
-                    "-=" => Token::MinusAssign,
-                    "*=" => Token::MultiplyAssign,
-                    "/=" => Token::DivideAssign,
-                    "%=" => Token::RemainderAssign,
-                    "&=" => Token::BitAndAssign,
-                    "|=" => Token::BitOrAssign,
-                    "^=" => Token::BitXorAssign,
+                    "+="  => Token::PlusAssign,
+                    "-="  => Token::MinusAssign,
+                    "*="  => Token::MultiplyAssign,
+                    "/="  => Token::DivideAssign,
+                    "%="  => Token::RemainderAssign,
+                    "&="  => Token::BitAndAssign,
+                    "|="  => Token::BitOrAssign,
+                    "^="  => Token::BitXorAssign,
                     "<<=" => Token::LeftshiftAssign,
                     ">>=" => Token::RightshiftAssign,
                     operator => return Err(anyhow!("Illegal operator: '{operator}'")),

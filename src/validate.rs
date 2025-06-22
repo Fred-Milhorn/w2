@@ -2,20 +2,14 @@
 //!
 //! Validate AST for symantic errors.
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use std::collections::HashMap;
 
 use crate::parse::{
-    Ast, Block, BlockItem, Declaration, Expression, ForInit, FunctionDeclaration, Identifier, Label, Statement, StorageClass,
-    UnaryOperator, VariableDeclaration,
+    Ast, Block, BlockItem, Declaration, Expression, ForInit, FunctionDeclaration, Identifier, Label, Parameter, Parameters,
+    Statement, StorageClass, Type, UnaryOperator, VariableDeclaration,
 };
 use crate::utils::temp_name;
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum Type {
-    Int,
-    FunType(usize),
-}
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum InitialValue {
@@ -66,13 +60,15 @@ impl<'a> IntoIterator for &'a SymbolTable {
 #[derive(Debug, Clone, PartialEq)]
 struct MapEntry {
     new_name: Identifier,
+    has_type: Type,
     from_current_scope: bool,
     has_linkage: bool,
 }
 
 impl MapEntry {
-    fn new(name: &str, current: bool, linkage: bool) -> Self {
+    fn new(name: &str, ident_type: &Type, current: bool, linkage: bool) -> Self {
         Self {
+            has_type: ident_type.clone(),
             new_name: name.to_string(),
             from_current_scope: current,
             has_linkage: linkage,
@@ -92,16 +88,20 @@ impl IdentMap {
         self.0.get(name).cloned()
     }
 
-    fn add(&mut self, name: &str, new_name: &str, from_current_scope: bool, has_linkage: bool) -> Option<MapEntry> {
-        self.0
-            .insert(name.to_string(), MapEntry::new(new_name, from_current_scope, has_linkage))
+    fn add(
+        &mut self, name: &str, new_name: &str, ident_type: &Type, from_current_scope: bool, has_linkage: bool,
+    ) -> Option<MapEntry> {
+        self.0.insert(
+            name.to_string(),
+            MapEntry::new(new_name, ident_type, from_current_scope, has_linkage),
+        )
     }
 
     fn duplicate(&self) -> IdentMap {
         let mut new_map = IdentMap::new();
 
         for (name, entry) in self.0.iter() {
-            new_map.add(name, &entry.new_name, false, false);
+            new_map.add(name, &entry.new_name, &entry.has_type, false, false);
         }
 
         new_map
@@ -148,28 +148,31 @@ pub fn validate(mut ast: Ast) -> Result<(Ast, SymbolTable)> {
 }
 
 fn resolve_file_scope_variables(declaration: &VariableDeclaration, ident_map: &mut IdentMap) {
-    let VariableDeclaration(name, _, _) = declaration;
+    let VariableDeclaration(name, _, var_type, _) = declaration;
 
-    ident_map.add(name, name, true, true);
+    ident_map.add(name, name, var_type, true, true);
 }
 
-fn resolve_parameter(parameter: &Identifier, ident_map: &mut IdentMap) -> Result<Identifier> {
-    if let Some(entry) = ident_map.get(parameter) {
+fn resolve_parameter(parameter: &Parameter, ident_map: &mut IdentMap) -> Result<Parameter> {
+    if let Some(entry) = ident_map.get(&parameter.name) {
         if entry.from_current_scope {
             return Err(anyhow!(
-                "resolve_declaration: duplicate declaration of variable '{parameter}'"
+                "resolve_declaration: duplicate declaration of variable '{parameter:?}'"
             ));
         }
     }
 
-    let unique_name = temp_name(parameter);
-    ident_map.add(parameter, &unique_name, true, false);
+    let unique_name = temp_name(&parameter.name);
+    ident_map.add(&parameter.name, &unique_name, &parameter.type_of, true, false);
 
-    Ok(unique_name)
+    Ok(Parameter {
+        name: unique_name,
+        type_of: parameter.type_of.clone(),
+    })
 }
 
 fn resolve_function(declaration: &FunctionDeclaration, ident_map: &mut IdentMap) -> Result<FunctionDeclaration> {
-    let FunctionDeclaration(name, opt_params, opt_body, opt_storage_class) = declaration;
+    let FunctionDeclaration(name, opt_params, opt_body, fn_type, opt_storage_class) = declaration;
 
     if let Some(entry) = ident_map.get(name) {
         if entry.from_current_scope && !entry.has_linkage {
@@ -177,12 +180,12 @@ fn resolve_function(declaration: &FunctionDeclaration, ident_map: &mut IdentMap)
         }
     }
 
-    ident_map.add(name, name, true, true);
+    ident_map.add(name, name, fn_type, true, true);
 
     let mut inner_map = ident_map.duplicate();
     let new_params = match opt_params {
         Some(params) => {
-            let mut resolved_params = Vec::<Identifier>::new();
+            let mut resolved_params = Parameters::new();
             for param in params {
                 let resolved_param = resolve_parameter(param, &mut inner_map)?;
                 resolved_params.push(resolved_param);
@@ -200,6 +203,7 @@ fn resolve_function(declaration: &FunctionDeclaration, ident_map: &mut IdentMap)
         name.clone(),
         new_params,
         new_body,
+        fn_type.clone(),
         opt_storage_class.clone(),
     ))
 }
@@ -211,10 +215,10 @@ fn resolve_block(block: &Block, ident_map: &mut IdentMap) -> Result<Block> {
         let new_item = match item {
             BlockItem::D(declaration) => BlockItem::D(match declaration {
                 Declaration::FunDecl(fundecl) => match fundecl {
-                    FunctionDeclaration(name, _, Some(_), _) => {
+                    FunctionDeclaration(name, _, Some(_), _, _) => {
                         return Err(anyhow!("resolve_block: nested function definitions not allowed: {name:?}"));
                     }
-                    FunctionDeclaration(name, _, _, Some(StorageClass::Static)) => {
+                    FunctionDeclaration(name, _, _, _, Some(StorageClass::Static)) => {
                         return Err(anyhow!("resolve_block: function declarations cannot be static: {name:?}"));
                     }
                     _ => Declaration::FunDecl(resolve_function(fundecl, ident_map)?),
@@ -230,7 +234,7 @@ fn resolve_block(block: &Block, ident_map: &mut IdentMap) -> Result<Block> {
 }
 
 fn resolve_local_variable(declaration: &VariableDeclaration, ident_map: &mut IdentMap) -> Result<VariableDeclaration> {
-    let VariableDeclaration(name, init, opt_storage_class) = declaration;
+    let VariableDeclaration(name, init, var_type, opt_storage_class) = declaration;
 
     if let Some(entry) = ident_map.get(name) {
         if entry.from_current_scope && !(entry.has_linkage && matches!(opt_storage_class, Some(StorageClass::Extern))) {
@@ -242,19 +246,24 @@ fn resolve_local_variable(declaration: &VariableDeclaration, ident_map: &mut Ide
 
     match opt_storage_class {
         Some(StorageClass::Extern) => {
-            ident_map.add(name, name, true, true);
+            ident_map.add(name, name, var_type, true, true);
             Ok(declaration.clone())
         }
         _ => {
             let unique_name = temp_name(name);
-            ident_map.add(name, &unique_name, true, false);
+            ident_map.add(name, &unique_name, var_type, true, false);
 
             let resolved_init = match init {
                 Some(initializer) => Some(resolve_expression(initializer, ident_map)?),
                 None => None,
             };
 
-            Ok(VariableDeclaration(unique_name, resolved_init, opt_storage_class.clone()))
+            Ok(VariableDeclaration(
+                unique_name,
+                resolved_init,
+                var_type.clone(),
+                opt_storage_class.clone(),
+            ))
         }
     }
 }
@@ -302,7 +311,7 @@ fn resolve_statement(statement: &Statement, ident_map: &IdentMap) -> Result<Stat
                 label.clone(),
             )
         }
-        Statement::Null => Statement::Null,
+        Statement::None => Statement::None,
     };
 
     Ok(new_statement)
@@ -328,37 +337,34 @@ fn resolve_for_init(for_init: &ForInit, ident_map: &mut IdentMap) -> Result<ForI
 
 fn resolve_expression(expression: &Expression, ident_map: &IdentMap) -> Result<Expression> {
     let new_expression = match expression {
-        Expression::Conditional(condition, then_part, else_part) => Expression::Conditional(
+        Expression::Conditional(condition, then_part, else_part, cond_type) => Expression::Conditional(
             Box::new(resolve_expression(condition, ident_map)?),
             Box::new(resolve_expression(then_part, ident_map)?),
             Box::new(resolve_expression(else_part, ident_map)?),
+            cond_type.clone(),
         ),
-        Expression::Assignment(left, right) => {
-            match **left {
-                // Here be boxes, arrgh!
-                Expression::Var(_) => Expression::Assignment(
-                    Box::new(resolve_expression(left, ident_map)?),
-                    Box::new(resolve_expression(right, ident_map)?),
-                ),
-                _ => return Err(anyhow!("resolve_expression: Illegal lvalue: '{left:?}'")),
-            }
-        }
-        Expression::CompoundAssignment(operator, left, right) => {
-            match **left {
-                // Here be boxes, arrgh!
-                Expression::Var(_) => Expression::CompoundAssignment(
-                    operator.clone(),
-                    Box::new(resolve_expression(left, ident_map)?),
-                    Box::new(resolve_expression(right, ident_map)?),
-                ),
-                _ => return Err(anyhow!("resolve_expression: Illegal lvalue: '{left:?}'")),
-            }
-        }
-        Expression::Var(name) => match ident_map.get(name) {
-            Some(entry) => Expression::Var(entry.new_name),
+        Expression::Assignment(left, right, assign_type) => match &**left {
+            Expression::Var(_, _) => Expression::Assignment(
+                Box::new(resolve_expression(left, ident_map)?),
+                Box::new(resolve_expression(right, ident_map)?),
+                assign_type.clone(),
+            ),
+            _ => return Err(anyhow!("resolve_expression: Illegal lvalue: '{left:?}'")),
+        },
+        Expression::CompoundAssignment(operator, left, right, comp_type) => match &**left {
+            Expression::Var(_, _) => Expression::CompoundAssignment(
+                operator.clone(),
+                Box::new(resolve_expression(left, ident_map)?),
+                Box::new(resolve_expression(right, ident_map)?),
+                comp_type.clone(),
+            ),
+            _ => return Err(anyhow!("resolve_expression: Illegal lvalue: '{left:?}'")),
+        },
+        Expression::Var(name, _) => match ident_map.get(name) {
+            Some(entry) => Expression::Var(entry.new_name, entry.has_type),
             None => return Err(anyhow!("resolve_expression: Undeclared variable: '{name}'")),
         },
-        Expression::Unary(operator, dst) => {
+        Expression::Unary(operator, dst, unary_type) => {
             let resolved = resolve_expression(dst, ident_map)?;
             if matches!(
                 operator,
@@ -366,19 +372,20 @@ fn resolve_expression(expression: &Expression, ident_map: &IdentMap) -> Result<E
                     | UnaryOperator::PreDecrement
                     | UnaryOperator::PostIncrement
                     | UnaryOperator::PostDecrement
-            ) && !matches!(resolved, Expression::Var(_))
+            ) && !matches!(resolved, Expression::Var(_, _))
             {
                 return Err(anyhow!("resolve_expression: Illegal lvalue: '{dst:?}'"));
             }
 
-            Expression::Unary(operator.clone(), Box::new(resolved))
+            Expression::Unary(operator.clone(), Box::new(resolved), unary_type.clone())
         }
-        Expression::Binary(operator, left, right) => Expression::Binary(
+        Expression::Binary(operator, left, right, exp_type) => Expression::Binary(
             operator.clone(),
             Box::new(resolve_expression(left, ident_map)?),
             Box::new(resolve_expression(right, ident_map)?),
+            exp_type.clone(),
         ),
-        Expression::FunctionCall(name, opt_args) => match ident_map.get(name) {
+        Expression::FunctionCall(name, opt_args, fun_type) => match ident_map.get(name) {
             Some(entry) => {
                 let new_name = entry.new_name.clone();
                 let new_args = match opt_args {
@@ -393,7 +400,7 @@ fn resolve_expression(expression: &Expression, ident_map: &IdentMap) -> Result<E
                     None => None,
                 };
 
-                Expression::FunctionCall(new_name, new_args)
+                Expression::FunctionCall(new_name, new_args, fun_type.clone())
             }
             None => return Err(anyhow!("resolve_expression: undeclarated function '{name}'")),
         },
@@ -468,12 +475,13 @@ fn label_block(block: &Block, label: &Option<Label>) -> Result<Block> {
 }
 
 fn label_loops(declaration: &FunctionDeclaration, label: &Option<Label>) -> Result<FunctionDeclaration> {
-    if let FunctionDeclaration(name, opt_params, Some(body), opt_storage_class) = declaration {
+    if let FunctionDeclaration(name, opt_params, Some(body), fun_type, opt_storage_class) = declaration {
         let new_body = label_block(body, label)?;
         return Ok(FunctionDeclaration(
             name.clone(),
             opt_params.clone(),
             Some(new_body),
+            fun_type.clone(),
             opt_storage_class.clone(),
         ));
     }
@@ -484,7 +492,7 @@ fn label_loops(declaration: &FunctionDeclaration, label: &Option<Label>) -> Resu
 fn typecheck_for_init(for_init: &ForInit, symbol_table: &mut SymbolTable) -> Result<()> {
     match for_init {
         ForInit::InitDecl(declaration) => {
-            if let VariableDeclaration(name, _, Some(_)) = declaration {
+            if let VariableDeclaration(name, _, _, Some(_)) = declaration {
                 return Err(anyhow!("typecheck_for_init: Storage class on for-init not allowed: {name:?}"));
             }
             typecheck_local_variable(declaration, symbol_table)?;
@@ -536,62 +544,73 @@ fn typecheck_statement(statement: &Statement, symbol_table: &mut SymbolTable) ->
     Ok(())
 }
 
-fn typecheck_expression(expression: &Expression, symbol_table: &mut SymbolTable) -> Result<()> {
-    match expression {
-        Expression::FunctionCall(name, opt_args) => match symbol_table.get(name) {
-            Some(entry) => match entry.symbol_type {
-                Type::Int => return Err(anyhow!("Variable used as function name: {name:?}")),
-                Type::FunType(params_count) => {
-                    let args_count = match opt_args {
-                        Some(args) => args.len(),
-                        None => 0,
-                    };
-
-                    if params_count != args_count {
-                        return Err(anyhow!("Function called with wrong number of arguments: {name:?}"));
-                    }
-
+fn typecheck_expression(expression: &Expression, symbol_table: &mut SymbolTable) -> Result<Expression> {
+    let new_expression = match expression {
+        Expression::FunctionCall(name, opt_args, _) => match symbol_table.get(name) {
+            Some(entry) => match &entry.symbol_type {
+                Type::FunType(param_types, _) => {
                     if let Some(args) = opt_args {
-                        for arg in args {
-                            typecheck_expression(arg, symbol_table)?;
+                        if args.len() != param_types.len() {
+                            return Err(anyhow!("Function called with wrong number of arguments: {name:?}"));
                         }
                     }
+
+                    let new_args = match opt_args {
+                        Some(args) => args
+                            .iter()
+                            .map(|arg| typecheck_expression(arg, symbol_table))
+                            .collect::<Result<Vec<_>>>()
+                            .map(Some),
+                        None => Ok(None),
+                    }?;
+
+                    Expression::FunctionCall(name.clone(), new_args, entry.symbol_type)
                 }
+                _ => return Err(anyhow!("Variable used as function name: {name:?}")),
             },
             None => return Err(anyhow!("Undefined function call: {name:?}")),
         },
-        Expression::Var(name) => match symbol_table.get(name) {
+        Expression::Var(name, _) => match symbol_table.get(name) {
             Some(entry) => {
-                if let Type::FunType(_) = entry.symbol_type {
+                if let Type::FunType(_, _) = entry.symbol_type {
                     return Err(anyhow!("Function name used as variable: {name:?}"));
                 }
+                Expression::Var(name.clone(), entry.symbol_type)
             }
             None => return Err(anyhow!("Undeclared variable in expression: {name:?}")),
         },
-        Expression::Assignment(lvalue, expression) => {
-            typecheck_expression(lvalue, symbol_table)?;
-            typecheck_expression(expression, symbol_table)?;
-        }
-        Expression::Unary(_, expression) => {
-            typecheck_expression(expression, symbol_table)?;
-        }
-        Expression::Binary(_, lhs, rhs) => {
-            typecheck_expression(lhs, symbol_table)?;
-            typecheck_expression(rhs, symbol_table)?;
-        }
-        Expression::CompoundAssignment(_, lvalue, rhs) => {
-            typecheck_expression(lvalue, symbol_table)?;
-            typecheck_expression(rhs, symbol_table)?;
-        }
-        Expression::Conditional(condition, then_branch, else_branch) => {
-            typecheck_expression(condition, symbol_table)?;
-            typecheck_expression(then_branch, symbol_table)?;
-            typecheck_expression(else_branch, symbol_table)?;
-        }
-        _ => (),
-    }
+        Expression::Assignment(lvalue, expression, assign_type) => Expression::Assignment(
+            Box::new(typecheck_expression(lvalue, symbol_table)?),
+            Box::new(typecheck_expression(expression, symbol_table)?),
+            assign_type.clone(),
+        ),
+        Expression::Unary(operator, expression, unary_type) => Expression::Unary(
+            operator.clone(),
+            Box::new(typecheck_expression(expression, symbol_table)?),
+            unary_type.clone(),
+        ),
+        Expression::Binary(operator, lhs, rhs, binary_type) => Expression::Binary(
+            operator.clone(),
+            Box::new(typecheck_expression(lhs, symbol_table)?),
+            Box::new(typecheck_expression(rhs, symbol_table)?),
+            binary_type.clone(),
+        ),
+        Expression::CompoundAssignment(operator, lvalue, rhs, comp_type) => Expression::CompoundAssignment(
+            operator.clone(),
+            Box::new(typecheck_expression(lvalue, symbol_table)?),
+            Box::new(typecheck_expression(rhs, symbol_table)?),
+            comp_type.clone(),
+        ),
+        Expression::Conditional(condition, then_branch, else_branch, cond_type) => Expression::Conditional(
+            Box::new(typecheck_expression(condition, symbol_table)?),
+            Box::new(typecheck_expression(then_branch, symbol_table)?),
+            Box::new(typecheck_expression(else_branch, symbol_table)?),
+            cond_type.clone(),
+        ),
+        _ => expression.clone(),
+    };
 
-    Ok(())
+    Ok(new_expression)
 }
 
 fn typecheck_block(block: &Block, symbol_table: &mut SymbolTable) -> Result<()> {
@@ -644,7 +663,7 @@ fn typecheck_local_variable(declaration: &VariableDeclaration, symbol_table: &mu
                 _ => {
                     return Err(anyhow!(
                         "typecheck_local_variable: Non-constant initializer on local static variable: {name:?}"
-                    ))
+                    ));
                 }
             };
             symbol_table.add(

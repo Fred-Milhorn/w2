@@ -28,10 +28,10 @@ use std::process;
 use anyhow::Result;
 use clap::Parser;
 
-mod code;
+// mod code;
 mod lex;
 mod parse;
-mod tacky;
+// mod tacky;
 mod utils;
 mod validate;
 
@@ -88,7 +88,7 @@ fn run(opts: &Opts, file: &Path) -> Result<()> {
         process::exit(0);
     }
 
-    let (validated_ast, symbol_table) = validate::validate(ast)?;
+    let (validated_ast, _symbol_table) = validate::validate(ast)?;
     if opts.debug {
         println!("validate: {:?}\n", validated_ast);
     }
@@ -96,38 +96,38 @@ fn run(opts: &Opts, file: &Path) -> Result<()> {
         process::exit(0);
     }
 
-    let tacky = tacky::generate(&validated_ast, &symbol_table)?;
-    if opts.debug {
-        println!("tacky: {:?}\n", tacky);
-    }
-    if opts.tacky {
-        process::exit(0);
-    }
+    // let tacky = tacky::generate(&validated_ast, &symbol_table)?;
+    // if opts.debug {
+    //     println!("tacky: {:?}\n", tacky);
+    // }
+    // if opts.tacky {
+    //     process::exit(0);
+    // }
 
-    let code = code::generate(&tacky, &symbol_table);
-    if opts.debug {
-        println!("code: {:?}\n", code);
-    }
-    if opts.codegen {
-        process::exit(0);
-    }
+    // let code = code::generate(&tacky, &symbol_table);
+    // if opts.debug {
+    //     println!("code: {:?}\n", code);
+    // }
+    // if opts.codegen {
+    //     process::exit(0);
+    // }
 
-    let assembly = code::emit(&code)?;
-    if opts.debug {
-        println!("assembly:\n{assembly}\n");
-    }
-    if opts.emitcode {
-        process::exit(0);
-    }
+    // let assembly = code::emit(&code)?;
+    // if opts.debug {
+    //     println!("assembly:\n{assembly}\n");
+    // }
+    // if opts.emitcode {
+    //     process::exit(0);
+    // }
 
-    let file_s = file_i.with_extension("s");
-    fs::write(&file_s, &assembly)?;
+    // let file_s = file_i.with_extension("s");
+    // fs::write(&file_s, &assembly)?;
 
-    if opts.compile {
-        utils::create_object_file(&file_s)?;
-    } else {
-        utils::create_executable(&file_s)?;
-    }
+    // if opts.compile {
+    //     utils::create_object_file(&file_s)?;
+    // } else {
+    //     utils::create_executable(&file_s)?;
+    // }
 
     Ok(())
 }

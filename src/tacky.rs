@@ -127,7 +127,7 @@ fn gen_function(declaration: &parse::FunctionDeclaration, symbol_table: &validat
             emit_block(block, &mut instructions)?;
 
             // Patch functions without return and/or body
-            if instructions.len() == 0 || !matches!(instructions.last(), Some(Instruction::Return(_))) {
+            if instructions.is_empty() || !matches!(instructions.last(), Some(Instruction::Return(_))) {
                 instructions.push(Instruction::Return(Val::Constant(0)));
             }
             Some(instructions)
