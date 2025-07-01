@@ -1,6 +1,6 @@
 //! lex.rs - Lexer for the w2 tiny C compiler
 
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use once_cell::sync::Lazy;
 use regex::Regex;
 
@@ -169,7 +169,7 @@ impl Token {
 /// Create a list of tokens lexed from the c source
 pub fn lex(input: &str) -> Result<TokenList> {
     static RE_IDENTIFIER: Lazy<Regex> = Lazy::new(|| Regex::new(r"^[a-zA-Z_]\w*\b").unwrap());
-    static RE_LCONSTANT : Lazy<Regex> = Lazy::new(|| Regex::new(r"(^[0-9]+)[lL]\b").unwrap());
+    static RE_LCONSTANT : Lazy<Regex> = Lazy::new(|| Regex::new(r"^[0-9]+[lL]\b").unwrap());
     static RE_CONSTANT  : Lazy<Regex> = Lazy::new(|| Regex::new(r"^[0-9]+\b").unwrap());
     static RE_SEPARATORS: Lazy<Regex> = Lazy::new(|| Regex::new(r"^[\,\{\}\(\)\;\?\:]").unwrap());
     static RE_OPERATORS1: Lazy<Regex> = Lazy::new(|| Regex::new(r"^\+=|^\-=|^\*=|^/=|^\%=|^\&=|^\|=|^\^=|^<<=|^>>=").unwrap());
@@ -206,8 +206,9 @@ pub fn lex(input: &str) -> Result<TokenList> {
                     name => Token::Identifier(name.to_string()),
                 };
                 (token, matched.len())
-            } else if let Some(matched) = RE_LCONSTANT.captures(source) {
-                let number = matched.get(1).unwrap().as_str().to_string();
+            } else if let Some(matched) = RE_LCONSTANT.find(source) {
+                let number_l = matched.as_str();
+                let number = number_l[..number_l.len() - 1].to_string();
                 let token = Token::LConstant(number);
                 (token, matched.len())
             } else if let Some(matched) = RE_CONSTANT.find(source) {

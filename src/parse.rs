@@ -69,6 +69,41 @@ pub enum Expression {
     FunctionCall(Identifier, Option<FunctionArgs>, Type),
 }
 
+#[allow(dead_code)]
+#[rustfmt::skip]
+impl Expression {
+    pub fn set_type(&mut self, new_type: Type) -> &Expression {
+        match self {
+            Expression::Constant(_, constant_type)             => *constant_type = new_type,
+            Expression::Var(_, var_type)                       => *var_type = new_type,
+            Expression::Cast(_, _, cast_type)                  => *cast_type = new_type,
+            Expression::Unary(_, _, unary_type)                => *unary_type = new_type,
+            Expression::Binary(_, _, _, binary_type)           => *binary_type = new_type,
+            Expression::Assignment(_, _, assignment_type)      => *assignment_type = new_type,
+            Expression::CompoundAssignment(_, _, _, comp_type) => *comp_type = new_type,
+            Expression::Conditional(_, _, _, conditional_type) => *conditional_type = new_type,
+            Expression::FunctionCall(_, _, func_type)          => *func_type = new_type,
+        }
+
+        self
+    }
+
+    pub fn get_type(&self) -> &Type {
+        match self {
+            Expression::Constant(_, constant_type)             => constant_type,
+            Expression::Var(_, var_type)                       => var_type,
+            Expression::Cast(_, _, cast_type)                  => cast_type,
+            Expression::Unary(_, _, unary_type)                => unary_type,
+            Expression::Binary(_, _, _, binary_type)           => binary_type,
+            Expression::Assignment(_, _, assignment_type)      => assignment_type,
+            Expression::CompoundAssignment(_, _, _, comp_type) => comp_type,
+            Expression::Conditional(_, _, _, conditional_type) => conditional_type,
+            Expression::FunctionCall(_, _, func_type)          => func_type,
+        }
+        
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum BlockItem {
     S(Statement),
@@ -101,9 +136,10 @@ pub enum StorageClass {
     Extern,
 }
 
-type ParameterTypes = Vec<Box<Type>>;
+type ParameterTypes = Box<Vec<Type>>;
 type ReturnType = Box<Type>;
 
+#[allow(clippy::enum_variant_names)]
 #[derive(Debug, Clone, PartialEq)]
 pub enum Type {
     Int,
@@ -216,34 +252,21 @@ fn parse_variable_declaration(tokens: &mut TokenStream, name: String, specifier:
     ))
 }
 
-fn parse_parameter(tokens: &mut TokenStream) -> Result<Identifier> {
-    tokens.expect(Token::Int)?;
-    let identifier = match tokens.next()? {
-        Token::Identifier(name) => name.to_string(),
-        token => return Err(anyhow!("parse_parameter: Unexpected token: '{token:?}'")),
-    };
-
-    Ok(identifier)
-}
-
 fn parse_parameter_list(tokens: &mut TokenStream) -> Result<Option<Parameters>> {
     let mut params = Parameters::new();
 
     tokens.expect(Token::OpenParen)?;
     while *tokens.peek()? != Token::CloseParen {
         match tokens.peek()? {
-            Token::Int => {
-                let param = parse_parameter(tokens)?;
+            Token::Int | Token::Long => {
+                let specifier = parse_type_and_storage_class(tokens)?;
+                let identifier = match tokens.next()? {
+                    Token::Identifier(name) => name.to_string(),
+                    token => return Err(anyhow!("parse_parameter: Unexpected token: '{token:?}'")),
+                };
                 params.push(Parameter {
-                    name: param,
-                    type_of: Type::Int,
-                });
-            }
-            Token::Long => {
-                let param = parse_parameter(tokens)?;
-                params.push(Parameter {
-                    name: param,
-                    type_of: Type::Long,
+                    name: identifier,
+                    type_of: specifier.type_of,
                 });
             }
             Token::Comma => {
@@ -278,15 +301,16 @@ fn parse_function_declaration(tokens: &mut TokenStream, name: String, specifier:
     };
 
     let param_types = {
-        let mut types: Vec<Box<Type>> = Vec::new();
+        let mut types: Vec<Type> = Vec::new();
         if let Some(ref parameters) = optional_params {
             for param in parameters {
-                types.push(Box::new(param.type_of.clone()));
+                types.push(param.type_of.clone());
             }
         }
         types
     };
-    let function_type = Type::FunType(param_types, Box::new(specifier.type_of.clone()));
+
+    let function_type = Type::FunType(Box::new(param_types), Box::new(specifier.type_of.clone()));
 
     Ok(FunctionDeclaration(
         name,
@@ -297,19 +321,19 @@ fn parse_function_declaration(tokens: &mut TokenStream, name: String, specifier:
     ))
 }
 
-fn parse_constant(token: &Token) -> Result<Const> {
+fn parse_constant(token: &Token) -> Result<Expression> {
     let number = match token {
         Token::Constant(value) => {
             let number: i64 = value.parse()?;
-            if number <= (2 ^ 31 - 1) {
-                Const::ConstInt(number as i32)
+            if number <= ((2 ^ 31) - 1) {
+                Expression::Constant(Const::ConstInt(number as i32), Type::Int)
             } else {
-                Const::ConstLong(number)
+                Expression::Constant(Const::ConstLong(number), Type::Long)
             }
         }
         Token::LConstant(value) => {
             let number: i64 = value.parse()?;
-            Const::ConstLong(number)
+            Expression::Constant(Const::ConstLong(number), Type::Long)
         }
         _ => return Err(anyhow!("parse_constant: unexpected token while parsing constant: {token:?}")),
     };
@@ -384,7 +408,7 @@ fn parse_declaration(tokens: &mut TokenStream) -> Result<Declaration> {
 
 fn parse_block_item(tokens: &mut TokenStream) -> Result<BlockItem> {
     let block_item = match tokens.peek()? {
-        Token::Int | Token::Static | Token::Extern => BlockItem::D(parse_declaration(tokens)?),
+        Token::Int | Token::Long | Token::Static | Token::Extern => BlockItem::D(parse_declaration(tokens)?),
         _ => BlockItem::S(parse_statement(tokens)?),
     };
 
@@ -504,7 +528,7 @@ fn parse_optional_expression(tokens: &mut TokenStream, expected: Token) -> Resul
 
 fn parse_for_init(tokens: &mut TokenStream) -> Result<ForInit> {
     let for_init = match tokens.peek()? {
-        Token::Int | Token::Static | Token::Extern => {
+        Token::Int | Token::Long | Token::Static | Token::Extern => {
             let declaration = parse_declaration(tokens)?;
             match declaration {
                 Declaration::FunDecl(_) => {
@@ -648,10 +672,9 @@ fn parse_function_call(tokens: &mut TokenStream, name: &String) -> Result<Expres
 
 fn parse_factor(tokens: &mut TokenStream) -> Result<Expression> {
     let expression = match tokens.peek()?.clone() {
-        token @ Token::Constant(_) => {
+        token @ (Token::Constant(_) | Token::LConstant(_)) => {
             tokens.next()?;
-            let number = parse_constant(&token)?;
-            Expression::Constant(number, Type::None)
+            parse_constant(&token)?
         }
         Token::Increment => {
             tokens.next()?;
@@ -675,23 +698,28 @@ fn parse_factor(tokens: &mut TokenStream) -> Result<Expression> {
             let inner_expression = parse_factor(tokens)?;
             Expression::Unary(operator, Box::new(inner_expression), Type::None)
         }
-        Token::OpenParen => match tokens.next()? {
-            Token::Int => {
-                let inner_expression = parse_factor(tokens)?;
-                tokens.expect(Token::CloseParen)?;
-                Expression::Cast(Type::Int, Box::new(inner_expression), Type::None)
+        Token::OpenParen => {
+            tokens.next()?;
+            match tokens.peek()? {
+                Token::Int => {
+                    tokens.next()?;
+                    tokens.expect(Token::CloseParen)?;
+                    let inner_expression = parse_factor(tokens)?;
+                    Expression::Cast(Type::Int, Box::new(inner_expression), Type::None)
+                }
+                Token::Long => {
+                    tokens.next()?;
+                    tokens.expect(Token::CloseParen)?;
+                    let inner_expression = parse_factor(tokens)?;
+                    Expression::Cast(Type::Long, Box::new(inner_expression), Type::None)
+                }
+                _ => {
+                    let inner_expression = parse_expression(tokens, 0)?;
+                    tokens.expect(Token::CloseParen)?;
+                    inner_expression
+                }
             }
-            Token::Long => {
-                let inner_expression = parse_factor(tokens)?;
-                tokens.expect(Token::CloseParen)?;
-                Expression::Cast(Type::Long, Box::new(inner_expression), Type::None)
-            }
-            _ => {
-                let inner_expression = parse_expression(tokens, 0)?;
-                tokens.expect(Token::CloseParen)?;
-                inner_expression
-            }
-        },
+        }
         token => return Err(anyhow!("parse_expression: Unexpected token: '{token:?}'")),
     };
 

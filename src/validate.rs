@@ -6,15 +6,16 @@ use anyhow::{Result, anyhow};
 use std::collections::HashMap;
 
 use crate::parse::{
-    Ast, Block, BlockItem, Declaration, Expression, ForInit, FunctionDeclaration, Identifier, Label, Parameter, Parameters,
-    Statement, StorageClass, Type, UnaryOperator, VariableDeclaration,
+    Ast, Block, BlockItem, Const, Declaration, Expression, ForInit, FunctionDeclaration, Identifier, Label, Parameter, Statement,
+    StorageClass, Type, UnaryOperator, VariableDeclaration,
 };
 use crate::utils::temp_name;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum InitialValue {
     Tentative,
-    Initial(i32),
+    ConstInt(i32),
+    ConstLong(i64),
     NoInitializer,
 }
 
@@ -133,13 +134,13 @@ pub fn validate(mut ast: Ast) -> Result<(Ast, SymbolTable)> {
     }
 
     // Typecheck all declarations, definitions, and variables
-    for declaration in declarations {
-        match declaration {
+    for declaration in declarations.iter_mut() {
+        *declaration = match declaration {
             Declaration::FunDecl(function_declaration) => {
-                typecheck_function(function_declaration, &mut symbol_table)?;
+                Declaration::FunDecl(typecheck_function(function_declaration, &mut symbol_table)?)
             }
             Declaration::VarDecl(variable_declaration) => {
-                typecheck_file_scope_variable(variable_declaration, &mut symbol_table)?;
+                Declaration::VarDecl(typecheck_file_scope_variable(variable_declaration, &mut symbol_table)?)
             }
         }
     }
@@ -179,25 +180,22 @@ fn resolve_function(declaration: &FunctionDeclaration, ident_map: &mut IdentMap)
             return Err(anyhow!("resolve_function: duplicate function declaration: '{name}'"));
         }
     }
-
     ident_map.add(name, name, fn_type, true, true);
 
     let mut inner_map = ident_map.duplicate();
-    let new_params = match opt_params {
-        Some(params) => {
-            let mut resolved_params = Parameters::new();
-            for param in params {
-                let resolved_param = resolve_parameter(param, &mut inner_map)?;
-                resolved_params.push(resolved_param);
-            }
-            Some(resolved_params)
-        }
-        None => None,
-    };
-    let new_body = match opt_body {
-        Some(body) => Some(resolve_block(body, &mut inner_map)?),
-        None => None,
-    };
+    let new_params = opt_params
+        .as_ref()
+        .map(|parameters| {
+            parameters
+                .iter()
+                .map(|parameter| resolve_parameter(parameter, &mut inner_map))
+                .collect::<Result<Vec<_>>>()
+        })
+        .transpose()?;
+    let new_body = opt_body
+        .as_ref()
+        .map(|body| resolve_block(body, &mut inner_map))
+        .transpose()?;
 
     Ok(FunctionDeclaration(
         name.clone(),
@@ -318,12 +316,10 @@ fn resolve_statement(statement: &Statement, ident_map: &IdentMap) -> Result<Stat
 }
 
 fn resolve_optional_expression(optional_expression: &Option<Expression>, ident_map: &IdentMap) -> Result<Option<Expression>> {
-    let resolved_expression = match optional_expression {
-        Some(expression) => Some(resolve_expression(expression, ident_map)?),
-        None => None,
-    };
-
-    Ok(resolved_expression)
+    optional_expression
+        .as_ref()
+        .map(|expression| resolve_expression(expression, ident_map))
+        .transpose()
 }
 
 fn resolve_for_init(for_init: &ForInit, ident_map: &mut IdentMap) -> Result<ForInit> {
@@ -337,6 +333,11 @@ fn resolve_for_init(for_init: &ForInit, ident_map: &mut IdentMap) -> Result<ForI
 
 fn resolve_expression(expression: &Expression, ident_map: &IdentMap) -> Result<Expression> {
     let new_expression = match expression {
+        Expression::Cast(target_type, expression, exp_type) => Expression::Cast(
+            target_type.clone(),
+            Box::new(resolve_expression(expression, ident_map)?),
+            exp_type.clone(),
+        ),
         Expression::Conditional(condition, then_part, else_part, cond_type) => Expression::Conditional(
             Box::new(resolve_expression(condition, ident_map)?),
             Box::new(resolve_expression(then_part, ident_map)?),
@@ -489,59 +490,62 @@ fn label_loops(declaration: &FunctionDeclaration, label: &Option<Label>) -> Resu
     Ok(declaration.clone())
 }
 
-fn typecheck_for_init(for_init: &ForInit, symbol_table: &mut SymbolTable) -> Result<()> {
-    match for_init {
+fn typecheck_for_init(for_init: &ForInit, symbol_table: &mut SymbolTable) -> Result<ForInit> {
+    let new_for_init = match for_init {
         ForInit::InitDecl(declaration) => {
             if let VariableDeclaration(name, _, _, Some(_)) = declaration {
                 return Err(anyhow!("typecheck_for_init: Storage class on for-init not allowed: {name:?}"));
             }
-            typecheck_local_variable(declaration, symbol_table)?;
+            ForInit::InitDecl(typecheck_local_variable(declaration, symbol_table)?)
         }
-        ForInit::InitExp(Some(expression)) => typecheck_expression(expression, symbol_table)?,
-        _ => (),
-    }
+        ForInit::InitExp(Some(expression)) => ForInit::InitExp(Some(typecheck_expression(expression, symbol_table)?)),
+        _ => for_init.clone(),
+    };
 
-    Ok(())
+    Ok(new_for_init)
 }
 
-fn typecheck_statement(statement: &Statement, symbol_table: &mut SymbolTable) -> Result<()> {
-    match statement {
-        Statement::Return(expression) => {
-            typecheck_expression(expression, symbol_table)?;
-        }
-        Statement::Expression(expression) => {
-            typecheck_expression(expression, symbol_table)?;
-        }
+fn typecheck_statement(statement: &Statement, symbol_table: &mut SymbolTable) -> Result<Statement> {
+    let new_statement = match statement {
+        Statement::Return(expression) => Statement::Return(typecheck_expression(expression, symbol_table)?),
+        Statement::Expression(expression) => Statement::Expression(typecheck_expression(expression, symbol_table)?),
         Statement::If(expression, then_branch, else_branch) => {
-            typecheck_expression(expression, symbol_table)?;
-            typecheck_statement(then_branch, symbol_table)?;
-            if let Some(else_part) = else_branch {
-                typecheck_statement(else_part, symbol_table)?;
-            }
+            let new_condition = typecheck_expression(expression, symbol_table)?;
+            let new_then_branch = typecheck_statement(then_branch, symbol_table)?;
+            let new_else_branch = match else_branch {
+                Some(branch) => Some(Box::new(typecheck_statement(branch, symbol_table)?)),
+                None => None,
+            };
+            Statement::If(new_condition, Box::new(new_then_branch), new_else_branch)
         }
-        Statement::Compound(block) => typecheck_block(block, symbol_table)?,
-        Statement::While(expression, statement, _) => {
-            typecheck_expression(expression, symbol_table)?;
-            typecheck_statement(statement, symbol_table)?;
+        Statement::Compound(block) => Statement::Compound(typecheck_block(block, symbol_table)?),
+        Statement::While(condition, statement, label) => {
+            let new_condition = typecheck_expression(condition, symbol_table)?;
+            let new_statement = typecheck_statement(statement, symbol_table)?;
+            Statement::While(new_condition, Box::new(new_statement), label.clone())
         }
-        Statement::DoWhile(statement, expression, _) => {
-            typecheck_statement(statement, symbol_table)?;
-            typecheck_expression(expression, symbol_table)?;
+        Statement::DoWhile(statement, condition, label) => {
+            let new_statement = typecheck_statement(statement, symbol_table)?;
+            let new_condition = typecheck_expression(condition, symbol_table)?;
+            Statement::DoWhile(Box::new(new_statement), new_condition, label.clone())
         }
-        Statement::For(for_init, opt_condition, opt_post, body, _) => {
-            typecheck_for_init(for_init, symbol_table)?;
-            if let Some(condition) = opt_condition {
-                typecheck_expression(condition, symbol_table)?;
-            }
-            if let Some(post) = opt_post {
-                typecheck_expression(post, symbol_table)?;
-            }
-            typecheck_statement(body, symbol_table)?;
+        Statement::For(for_init, opt_condition, opt_post, body, label) => {
+            let new_init = typecheck_for_init(for_init, symbol_table)?;
+            let new_condition = match opt_condition {
+                Some(condition) => Some(typecheck_expression(condition, symbol_table)?),
+                None => None,
+            };
+            let new_post = match opt_post {
+                Some(post) => Some(typecheck_expression(post, symbol_table)?),
+                None => None,
+            };
+            let new_body = typecheck_statement(body, symbol_table)?;
+            Statement::For(new_init, new_condition, new_post, Box::new(new_body), label.clone())
         }
-        _ => (),
-    }
+        _ => statement.clone(),
+    };
 
-    Ok(())
+    Ok(new_statement)
 }
 
 fn typecheck_expression(expression: &Expression, symbol_table: &mut SymbolTable) -> Result<Expression> {
@@ -607,30 +611,48 @@ fn typecheck_expression(expression: &Expression, symbol_table: &mut SymbolTable)
             Box::new(typecheck_expression(else_branch, symbol_table)?),
             cond_type.clone(),
         ),
-        _ => expression.clone(),
+        Expression::Cast(target_type, cast_exp, _cast_type) => Expression::Cast(
+            target_type.clone(),
+            Box::new(typecheck_expression(cast_exp, symbol_table)?),
+            target_type.clone(),
+        ),
+        Expression::Constant(const_value, _const_type) => {
+            let new_type = match const_value {
+                Const::ConstInt(_) => Type::Int,
+                Const::ConstLong(_) => Type::Long,
+            };
+            Expression::Constant(const_value.clone(), new_type)
+        }
     };
 
     Ok(new_expression)
 }
 
-fn typecheck_block(block: &Block, symbol_table: &mut SymbolTable) -> Result<()> {
-    for item in block {
-        match item {
-            BlockItem::D(declaration) => match declaration {
-                Declaration::VarDecl(vardecl) => typecheck_local_variable(vardecl, symbol_table)?,
-                Declaration::FunDecl(fundecl) => typecheck_function(fundecl, symbol_table)?,
-            },
-            BlockItem::S(statement) => typecheck_statement(statement, symbol_table)?,
-        }
-    }
+fn typecheck_decl_stmt(item: &BlockItem, symbol_table: &mut SymbolTable) -> Result<BlockItem> {
+    let new_item = match item {
+        BlockItem::D(declaration) => match declaration {
+            Declaration::VarDecl(vardecl) => BlockItem::D(Declaration::VarDecl(typecheck_local_variable(vardecl, symbol_table)?)),
+            Declaration::FunDecl(fundecl) => BlockItem::D(Declaration::FunDecl(typecheck_function(fundecl, symbol_table)?)),
+        },
+        BlockItem::S(statement) => BlockItem::S(typecheck_statement(statement, symbol_table)?),
+    };
 
-    Ok(())
+    Ok(new_item)
 }
 
-fn typecheck_local_variable(declaration: &VariableDeclaration, symbol_table: &mut SymbolTable) -> Result<()> {
-    let VariableDeclaration(name, init, opt_storage_class) = declaration;
+fn typecheck_block(block: &Block, symbol_table: &mut SymbolTable) -> Result<Block> {
+    let new_block = block
+        .iter()
+        .map(|item| typecheck_decl_stmt(item, symbol_table))
+        .collect::<Result<Vec<_>>>()?;
 
-    match opt_storage_class {
+    Ok(new_block)
+}
+
+fn typecheck_local_variable(declaration: &VariableDeclaration, symbol_table: &mut SymbolTable) -> Result<VariableDeclaration> {
+    let VariableDeclaration(name, init, var_type, opt_storage_class) = declaration;
+
+    let new_declaration = match opt_storage_class {
         Some(StorageClass::Extern) => {
             if init.is_some() {
                 return Err(anyhow!(
@@ -639,7 +661,7 @@ fn typecheck_local_variable(declaration: &VariableDeclaration, symbol_table: &mu
             }
             match symbol_table.get(name) {
                 Some(entry) => {
-                    if entry.symbol_type != Type::Int {
+                    if entry.symbol_type != *var_type {
                         return Err(anyhow!(
                             "typecheck_local_variable: function redeclared as variable: {entry:?}"
                         ));
@@ -649,17 +671,25 @@ fn typecheck_local_variable(declaration: &VariableDeclaration, symbol_table: &mu
                     symbol_table.add(
                         name,
                         Symbol {
-                            symbol_type: Type::Int,
+                            symbol_type: var_type.clone(),
                             attrs: IdentAttrs::Static(InitialValue::NoInitializer, true),
                         },
                     );
                 }
             }
+            declaration.clone()
         }
         Some(StorageClass::Static) => {
             let initial_value = match init {
-                Some(Expression::Constant(number)) => InitialValue::Initial(*number),
-                None => InitialValue::Initial(0),
+                Some(Expression::Constant(numeric, _)) => match numeric {
+                    Const::ConstInt(number) => InitialValue::ConstInt(*number),
+                    Const::ConstLong(number) => InitialValue::ConstLong(*number),
+                },
+                None => match var_type {
+                    Type::Int => InitialValue::ConstInt(0),
+                    Type::Long => InitialValue::ConstLong(0),
+                    _ => todo!(),
+                },
                 _ => {
                     return Err(anyhow!(
                         "typecheck_local_variable: Non-constant initializer on local static variable: {name:?}"
@@ -669,47 +699,52 @@ fn typecheck_local_variable(declaration: &VariableDeclaration, symbol_table: &mu
             symbol_table.add(
                 name,
                 Symbol {
-                    symbol_type: Type::Int,
+                    symbol_type: var_type.clone(),
                     attrs: IdentAttrs::Static(initial_value, false),
                 },
             );
+            declaration.clone()
         }
         _ => {
             symbol_table.add(
                 name,
                 Symbol {
-                    symbol_type: Type::Int,
+                    symbol_type: var_type.clone(),
                     attrs: IdentAttrs::Local,
                 },
             );
+            let new_init = init
+                .as_ref()
+                .map(|expression| typecheck_expression(expression, symbol_table))
+                .transpose()?;
 
-            if let Some(expression) = init {
-                typecheck_expression(expression, symbol_table)?;
-            }
+            VariableDeclaration(name.clone(), new_init, var_type.clone(), opt_storage_class.clone())
         }
-    }
+    };
 
-    Ok(())
+    Ok(new_declaration)
 }
 
-fn typecheck_file_scope_variable(declaration: &VariableDeclaration, symbol_table: &mut SymbolTable) -> Result<()> {
-    let VariableDeclaration(name, init, opt_storage_class) = declaration;
+fn typecheck_file_scope_variable(
+    declaration: &VariableDeclaration, symbol_table: &mut SymbolTable,
+) -> Result<VariableDeclaration> {
+    let VariableDeclaration(name, init, var_type, opt_storage_class) = declaration;
 
     let mut initial_value = match init {
-        Some(Expression::Constant(number)) => InitialValue::Initial(*number),
-        None => {
-            if matches!(opt_storage_class, Some(StorageClass::Extern)) {
-                InitialValue::NoInitializer
-            } else {
-                InitialValue::Tentative
-            }
-        }
+        Some(Expression::Constant(numeric, _)) => match numeric {
+            Const::ConstInt(number) => InitialValue::ConstInt(*number),
+            Const::ConstLong(number) => InitialValue::ConstLong(*number),
+        },
+        None => match opt_storage_class {
+            Some(StorageClass::Extern) => InitialValue::NoInitializer,
+            _ => InitialValue::Tentative,
+        },
         _ => return Err(anyhow!("typecheck_file_scope_variable: non-constant initializer: {init:?}")),
     };
     let mut global = !matches!(opt_storage_class, Some(StorageClass::Static));
 
     if let Some(entry) = symbol_table.get(name) {
-        if entry.symbol_type != Type::Int {
+        if !matches!(entry.symbol_type, Type::Int | Type::Long) {
             return Err(anyhow!("Function redeclared as variable: '{entry:?}'"));
         }
         let mut entry_is_global = false;
@@ -725,39 +760,60 @@ fn typecheck_file_scope_variable(declaration: &VariableDeclaration, symbol_table
                 "typecheck_file_scope_variable: conflicting variable linkage: {entry:?}"
             ));
         }
-        if matches!(entry_initial_value, InitialValue::Initial(_)) {
-            if matches!(initial_value, InitialValue::Initial(_)) {
+        if entry.symbol_type != *var_type {
+            return Err(anyhow!(
+                "typecheck_file_scope_variable: for variable {:?}, conflicting file scope variable types: {:?} vs. {:?}",
+                name,
+                entry.symbol_type,
+                *var_type,
+            ));
+        }
+        if matches!(entry_initial_value, InitialValue::ConstInt(_) | InitialValue::ConstLong(_)) {
+            if matches!(initial_value, InitialValue::ConstInt(_) | InitialValue::ConstLong(_)) {
                 return Err(anyhow!(
-                    "typecheck_file_scope_varuable: conflicting file scope variable definitions: {entry:?}"
+                    "typecheck_file_scope_variable: conflicting file scope variable definitions: {entry:?}"
                 ));
             } else {
                 initial_value = entry_initial_value;
             }
-        } else if !matches!(initial_value, InitialValue::Initial(_)) && matches!(entry_initial_value, InitialValue::Tentative) {
+        } else if !matches!(initial_value, InitialValue::ConstInt(_) | InitialValue::ConstLong(_))
+            && matches!(entry_initial_value, InitialValue::Tentative)
+        {
             initial_value = InitialValue::Tentative;
         }
     }
 
-    symbol_table.add(
-        name,
-        Symbol {
-            symbol_type: Type::Int,
-            attrs: IdentAttrs::Static(initial_value, global),
-        },
-    );
+    let new_symbol = Symbol {
+        symbol_type: var_type.clone(),
+        attrs: IdentAttrs::Static(initial_value, global),
+    };
+    symbol_table.add(name, new_symbol);
 
-    Ok(())
+    Ok(declaration.clone())
 }
 
-fn typecheck_function(declaration: &FunctionDeclaration, symbol_table: &mut SymbolTable) -> Result<()> {
-    let FunctionDeclaration(name, parameters, body, opt_storage_class) = declaration;
+pub fn equal_types(a: &Type, b: &Type) -> bool {
+    match (a, b) {
+        (Type::Int, Type::Int) => true,
+        (Type::Long, Type::Long) => true,
+        (Type::None, Type::None) => true,
+        (Type::FunType(params_a, ret_a), Type::FunType(params_b, ret_b)) => {
+            params_a.len() == params_b.len()
+                && equal_types(ret_a, ret_b)
+                && params_a.iter().zip(params_b.iter()).all(|(p, q)| equal_types(p, q))
+        }
+        _ => false,
+    }
+}
 
-    let function_type = Type::FunType(parameters.as_ref().map_or(0, |params| params.len()));
+fn typecheck_function(declaration: &FunctionDeclaration, symbol_table: &mut SymbolTable) -> Result<FunctionDeclaration> {
+    let FunctionDeclaration(name, parameters, body, function_type, opt_storage_class) = declaration;
+
     let mut global = !matches!(opt_storage_class, Some(StorageClass::Static));
     let mut already_defined = false;
 
     if let Some(entry) = symbol_table.get(name) {
-        if entry.symbol_type != function_type {
+        if !equal_types(&entry.symbol_type, function_type) {
             return Err(anyhow!("Incompatible function declarations: '{entry:?}'"));
         }
         let mut entry_is_global = false;
@@ -769,7 +825,7 @@ fn typecheck_function(declaration: &FunctionDeclaration, symbol_table: &mut Symb
             return Err(anyhow!("Function defined more than once: {entry:?}'"));
         }
         if matches!(opt_storage_class, Some(StorageClass::Static)) && entry_is_global {
-            return Err(anyhow!("Static function delcaration follows non-static: {entry:?}"));
+            return Err(anyhow!("Static function declaration follows non-static: {entry:?}"));
         }
         global = entry_is_global;
     }
@@ -777,25 +833,35 @@ fn typecheck_function(declaration: &FunctionDeclaration, symbol_table: &mut Symb
     symbol_table.add(
         name,
         Symbol {
-            symbol_type: function_type,
+            symbol_type: function_type.clone(),
             attrs: IdentAttrs::Function(already_defined || body.is_some(), global),
         },
     );
 
-    if let Some(block) = body {
-        if let Some(params) = parameters {
-            for param in params {
-                symbol_table.add(
-                    param,
-                    Symbol {
-                        symbol_type: Type::Int,
-                        attrs: IdentAttrs::Local,
-                    },
-                );
+    let new_block = match body {
+        Some(block) => {
+            if let Some(params) = parameters {
+                for param in params {
+                    symbol_table.add(
+                        &param.name,
+                        Symbol {
+                            symbol_type: param.type_of.clone(),
+                            attrs: IdentAttrs::Local,
+                        },
+                    );
+                }
             }
+            Some(typecheck_block(block, symbol_table)?)
         }
-        typecheck_block(block, symbol_table)?;
-    }
+        None => None,
+    };
+    let new_decl = FunctionDeclaration(
+        name.clone(),
+        parameters.clone(),
+        new_block,
+        function_type.clone(),
+        opt_storage_class.clone(),
+    );
 
-    Ok(())
+    Ok(new_decl)
 }
