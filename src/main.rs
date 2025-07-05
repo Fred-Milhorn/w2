@@ -32,6 +32,7 @@ use clap::Parser;
 mod lex;
 mod parse;
 // mod tacky;
+mod convert;
 mod utils;
 mod validate;
 
@@ -74,7 +75,7 @@ fn run(opts: &Opts, file: &Path) -> Result<()> {
 
     let tokens = lex::lex(&source)?;
     if opts.debug {
-        println!("lex: {:?}\n", tokens);
+        println!("lex: {tokens:?}\n");
     }
     if opts.lex {
         process::exit(0);
@@ -82,7 +83,7 @@ fn run(opts: &Opts, file: &Path) -> Result<()> {
 
     let ast = parse::parse(&tokens)?;
     if opts.debug {
-        println!("parse: {:?}\n", ast);
+        println!("parse: {ast:?}\n");
     }
     if opts.parse {
         process::exit(0);
@@ -90,7 +91,7 @@ fn run(opts: &Opts, file: &Path) -> Result<()> {
 
     let (validated_ast, _symbol_table) = validate::validate(ast)?;
     if opts.debug {
-        println!("validate: {:?}\n", validated_ast);
+        println!("validate: {validated_ast:?}\n");
     }
     if opts.validate {
         process::exit(0);

@@ -72,8 +72,9 @@ pub enum Expression {
 #[allow(dead_code)]
 #[rustfmt::skip]
 impl Expression {
-    pub fn set_type(&mut self, new_type: Type) -> &Expression {
-        match self {
+    pub fn set_type(&self, new_type: Type) -> Expression {
+        let mut new_expression = self.clone();
+        match &mut new_expression {
             Expression::Constant(_, constant_type)             => *constant_type = new_type,
             Expression::Var(_, var_type)                       => *var_type = new_type,
             Expression::Cast(_, _, cast_type)                  => *cast_type = new_type,
@@ -84,12 +85,11 @@ impl Expression {
             Expression::Conditional(_, _, _, conditional_type) => *conditional_type = new_type,
             Expression::FunctionCall(_, _, func_type)          => *func_type = new_type,
         }
-
-        self
+        new_expression
     }
 
-    pub fn get_type(&self) -> &Type {
-        match self {
+    pub fn get_type(&self) -> Type {
+        let new_type = match self {
             Expression::Constant(_, constant_type)             => constant_type,
             Expression::Var(_, var_type)                       => var_type,
             Expression::Cast(_, _, cast_type)                  => cast_type,
@@ -99,8 +99,8 @@ impl Expression {
             Expression::CompoundAssignment(_, _, _, comp_type) => comp_type,
             Expression::Conditional(_, _, _, conditional_type) => conditional_type,
             Expression::FunctionCall(_, _, func_type)          => func_type,
-        }
-        
+        };
+        new_type.clone()
     }
 }
 
