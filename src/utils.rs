@@ -3,10 +3,10 @@
 //!
 //! # Summary
 //!
-//! Most of these functions are very specific to what's needed by the w2 C compiler,
+//! Most of these functions are very specific to the w2 C compiler,
 //! with run_cli() being an exception.
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use std::path::PathBuf;
 use std::process::Command;
 

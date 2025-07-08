@@ -21,12 +21,11 @@
 extern crate simple_counter;
 generate_counter!(Counter, usize);
 
+use anyhow::Result;
+use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process;
-
-use anyhow::Result;
-use clap::Parser;
 
 // mod code;
 mod lex;
@@ -36,34 +35,68 @@ mod convert;
 mod utils;
 mod validate;
 
-#[derive(Parser, Debug)]
-#[command(version, about = "The w2 tiny C compiler", long_about = None)]
-pub struct Opts {
-    #[arg(short, long, default_value_t = false, help = "Turn on debugging output")]
-    pub debug: bool,
+#[rustfmt::skip]
+#[derive(Debug)]
+struct Opts {
+    debug:    bool,
+    lex:      bool,
+    parse:    bool,
+    validate: bool,
+    tacky:    bool,
+    codegen:  bool,
+    emitcode: bool,
+    compile:  bool,
+    files:    Vec<PathBuf>,
+}
 
-    #[arg(long, default_value_t = false, help = "Exit after the lexer")]
-    pub lex: bool,
+fn usage(msg: &str) -> ! {
+    eprintln!("{msg}\nUsage: w2 [options] file ...");
+    std::process::exit(1);
+}
 
-    #[arg(long, default_value_t = false, help = "Exit after the parser")]
-    pub parse: bool,
+#[rustfmt::skip]
+fn main() -> Result<()> {
+    let mut opts = Opts {
+        debug:    false,
+        lex:      false,
+        parse:    false,
+        validate: false,
+        tacky:    false,
+        codegen:  false,
+        emitcode: false,
+        compile:  false,
+        files:    Vec::new(),
+    };
 
-    #[arg(long, default_value_t = false, help = "Exit after validation")]
-    pub validate: bool,
+    for option in env::args().skip(1) {
+        if option.starts_with("-") {
+            match option.trim_start_matches('-') {
+                "debug"    | "d" => opts.debug    = true,
+                "lex"      | "l" => opts.lex      = true,
+                "parse"    | "p" => opts.parse    = true,
+                "validate" | "v" => opts.validate = true,
+                "tacky"    | "t" => opts.tacky    = true,
+                "codegen"  | "c" => opts.codegen  = true,
+                "emitcode" | "e" => opts.emitcode = true,
+                "compile"  | "m" => opts.compile  = true,
+                _ => usage(&format!("Unknown option: {option:?}")),
+            }
+        } else {
+            opts.files.push(option.into());
+        }
+    }
 
-    #[arg(long, default_value_t = false, help = "Exit after generating the IR")]
-    pub tacky: bool,
+    println!("{opts:?}");
+    
+    if opts.files.is_empty() {
+        usage("Need at least one file to compile");
+    }
 
-    #[arg(long, default_value_t = false, help = "Exit after generating abstract assembly")]
-    pub codegen: bool,
+    for file in &opts.files {
+        run(&opts, file)?;
+    }
 
-    #[arg(long, default_value_t = false, help = "Exit after generating x64 assembly language")]
-    pub emitcode: bool,
-
-    #[arg(short, default_value_t = false, help = "Just produce an object file (.o)")]
-    pub compile: bool,
-
-    pub files: Vec<PathBuf>,
+    Ok(())
 }
 
 fn run(opts: &Opts, file: &Path) -> Result<()> {
@@ -133,12 +166,3 @@ fn run(opts: &Opts, file: &Path) -> Result<()> {
     Ok(())
 }
 
-fn main() -> Result<()> {
-    let opts = Opts::parse();
-
-    for file in &opts.files {
-        run(&opts, file)?;
-    }
-
-    Ok(())
-}
