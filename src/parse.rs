@@ -161,7 +161,12 @@ pub struct Parameter {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct VariableDeclaration(pub Identifier, pub Option<Expression>, pub Type, pub Option<StorageClass>);
+pub struct VariableDeclaration(
+    pub Identifier,
+    pub Option<Expression>,
+    pub Type,
+    pub Option<StorageClass>,
+);
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct FunctionDeclaration(
@@ -231,7 +236,9 @@ pub fn parse(token_list: &TokenList) -> Result<Ast> {
     Ok(Ast::Program(declarations))
 }
 
-fn parse_variable_declaration(tokens: &mut TokenStream, name: String, specifier: &Specifier) -> Result<VariableDeclaration> {
+fn parse_variable_declaration(
+    tokens: &mut TokenStream, name: String, specifier: &Specifier,
+) -> Result<VariableDeclaration> {
     let expression = match tokens.peek()? {
         Token::Assignment => {
             tokens.next()?;
@@ -288,7 +295,9 @@ fn parse_parameter_list(tokens: &mut TokenStream) -> Result<Option<Parameters>> 
     Ok(Some(params))
 }
 
-fn parse_function_declaration(tokens: &mut TokenStream, name: String, specifier: &Specifier) -> Result<FunctionDeclaration> {
+fn parse_function_declaration(
+    tokens: &mut TokenStream, name: String, specifier: &Specifier,
+) -> Result<FunctionDeclaration> {
     let optional_params = parse_parameter_list(tokens)?;
 
     let optional_body = match tokens.peek()? {
@@ -335,7 +344,11 @@ fn parse_constant(token: &Token) -> Result<Expression> {
             let number: i64 = value.parse()?;
             Expression::Constant(Const::ConstLong(number), Type::Long)
         }
-        _ => return Err(anyhow!("parse_constant: unexpected token while parsing constant: {token:?}")),
+        _ => {
+            return Err(anyhow!(
+                "parse_constant: unexpected token while parsing constant: {token:?}"
+            ));
+        }
     };
 
     Ok(number)
@@ -496,7 +509,13 @@ fn parse_statement(tokens: &mut TokenStream) -> Result<Statement> {
             let optional_exp1 = parse_optional_expression(tokens, Token::Semicolon)?;
             let optional_exp2 = parse_optional_expression(tokens, Token::CloseParen)?;
             let statement = parse_statement(tokens)?;
-            Statement::For(for_init, optional_exp1, optional_exp2, Box::new(statement), temp_name("for"))
+            Statement::For(
+                for_init,
+                optional_exp1,
+                optional_exp2,
+                Box::new(statement),
+                temp_name("for"),
+            )
         }
         Token::Semicolon => parse_null(tokens)?,
         Token::Return => parse_return(tokens)?,
@@ -532,7 +551,9 @@ fn parse_for_init(tokens: &mut TokenStream) -> Result<ForInit> {
             let declaration = parse_declaration(tokens)?;
             match declaration {
                 Declaration::FunDecl(_) => {
-                    return Err(anyhow!("parse_for_init: Unexpected function declaration: {declaration:?}"));
+                    return Err(anyhow!(
+                        "parse_for_init: Unexpected function declaration: {declaration:?}"
+                    ));
                 }
                 Declaration::VarDecl(variable_declaration) => ForInit::InitDecl(variable_declaration),
             }

@@ -24,18 +24,15 @@ pub fn convert_static_init(name: &str, var_type: &Type, init: &Option<Expression
     let initial_value = match init {
         Some(Expression::Constant(numeric, _)) => match numeric {
             Const::ConstInt(number) => InitialValue::Initial(StaticInit::IntInit(*number)),
-            Const::ConstLong(number) => {
-                let initializer = match var_type {
-                    Type::Int => InitialValue::Initial(StaticInit::IntInit(*number as i32)),
-                    Type::Long => InitialValue::Initial(StaticInit::LongInit(*number)),
-                    _ => {
-                        return Err(anyhow!(
-                            "convert_static_init: unexpected type {var_type:?} for variable {name:?}"
-                        ));
-                    }
-                };
-                initializer
-            }
+            Const::ConstLong(number) => match var_type {
+                Type::Int => InitialValue::Initial(StaticInit::IntInit(*number as i32)),
+                Type::Long => InitialValue::Initial(StaticInit::LongInit(*number)),
+                _ => {
+                    return Err(anyhow!(
+                        "convert_static_init: unexpected type {var_type:?} for variable {name:?}"
+                    ));
+                }
+            },
         },
         None => match var_type {
             Type::Int => InitialValue::Initial(StaticInit::IntInit(0)),

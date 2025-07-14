@@ -7,8 +7,8 @@ use std::collections::HashMap;
 
 use crate::convert::{convert_static_init, convert_to, get_common_type};
 use crate::parse::{
-    Ast, BinaryOperator, Block, BlockItem, Const, Declaration, Expression, ForInit, FunctionDeclaration, Identifier, Label,
-    Parameter, Statement, StorageClass, Type, UnaryOperator, VariableDeclaration,
+    Ast, BinaryOperator, Block, BlockItem, Const, Declaration, Expression, ForInit, FunctionDeclaration, Identifier,
+    Label, Parameter, Statement, StorageClass, Type, UnaryOperator, VariableDeclaration,
 };
 use crate::utils::temp_name;
 
@@ -220,10 +220,14 @@ fn resolve_block(block: &Block, ident_map: &mut IdentMap) -> Result<Block> {
             BlockItem::D(declaration) => BlockItem::D(match declaration {
                 Declaration::FunDecl(fundecl) => match fundecl {
                     FunctionDeclaration(name, _, Some(_), _, _) => {
-                        return Err(anyhow!("resolve_block: nested function definitions not allowed: {name:?}"));
+                        return Err(anyhow!(
+                            "resolve_block: nested function definitions not allowed: {name:?}"
+                        ));
                     }
                     FunctionDeclaration(name, _, _, _, Some(StorageClass::Static)) => {
-                        return Err(anyhow!("resolve_block: function declarations cannot be static: {name:?}"));
+                        return Err(anyhow!(
+                            "resolve_block: function declarations cannot be static: {name:?}"
+                        ));
                     }
                     _ => Declaration::FunDecl(resolve_function(fundecl, ident_map)?),
                 },
@@ -321,7 +325,9 @@ fn resolve_statement(statement: &Statement, ident_map: &IdentMap) -> Result<Stat
     Ok(new_statement)
 }
 
-fn resolve_optional_expression(optional_expression: &Option<Expression>, ident_map: &IdentMap) -> Result<Option<Expression>> {
+fn resolve_optional_expression(
+    optional_expression: &Option<Expression>, ident_map: &IdentMap,
+) -> Result<Option<Expression>> {
     optional_expression
         .as_ref()
         .map(|expression| resolve_expression(expression, ident_map))
@@ -500,7 +506,9 @@ fn typecheck_for_init(for_init: &ForInit, symbol_table: &mut SymbolTable) -> Res
     let new_for_init = match for_init {
         ForInit::InitDecl(declaration) => {
             if let VariableDeclaration(name, _, _, Some(_)) = declaration {
-                return Err(anyhow!("typecheck_for_init: Storage class on for-init not allowed: {name:?}"));
+                return Err(anyhow!(
+                    "typecheck_for_init: Storage class on for-init not allowed: {name:?}"
+                ));
             }
             ForInit::InitDecl(typecheck_local_variable(declaration, symbol_table)?)
         }
@@ -678,8 +686,12 @@ fn typecheck_expression(expression: &Expression, symbol_table: &mut SymbolTable)
 fn typecheck_decl_stmt(item: &BlockItem, name: &str, symbol_table: &mut SymbolTable) -> Result<BlockItem> {
     let new_item = match item {
         BlockItem::D(declaration) => match declaration {
-            Declaration::VarDecl(vardecl) => BlockItem::D(Declaration::VarDecl(typecheck_local_variable(vardecl, symbol_table)?)),
-            Declaration::FunDecl(fundecl) => BlockItem::D(Declaration::FunDecl(typecheck_function(fundecl, symbol_table)?)),
+            Declaration::VarDecl(vardecl) => {
+                BlockItem::D(Declaration::VarDecl(typecheck_local_variable(vardecl, symbol_table)?))
+            }
+            Declaration::FunDecl(fundecl) => {
+                BlockItem::D(Declaration::FunDecl(typecheck_function(fundecl, symbol_table)?))
+            }
         },
         BlockItem::S(statement) => BlockItem::S(typecheck_statement(statement, name, symbol_table)?),
     };
@@ -696,7 +708,9 @@ fn typecheck_block(block: &Block, name: &str, symbol_table: &mut SymbolTable) ->
     Ok(new_block)
 }
 
-fn typecheck_local_variable(declaration: &VariableDeclaration, symbol_table: &mut SymbolTable) -> Result<VariableDeclaration> {
+fn typecheck_local_variable(
+    declaration: &VariableDeclaration, symbol_table: &mut SymbolTable,
+) -> Result<VariableDeclaration> {
     let VariableDeclaration(name, init, var_type, opt_storage_class) = declaration;
 
     let new_declaration = match opt_storage_class {
@@ -771,7 +785,11 @@ fn typecheck_file_scope_variable(
             Some(StorageClass::Extern) => InitialValue::NoInitializer,
             _ => InitialValue::Tentative,
         },
-        _ => return Err(anyhow!("typecheck_file_scope_variable: non-constant initializer: {init:?}")),
+        _ => {
+            return Err(anyhow!(
+                "typecheck_file_scope_variable: non-constant initializer: {init:?}"
+            ));
+        }
     };
     let mut global = !matches!(opt_storage_class, Some(StorageClass::Static));
 
@@ -808,7 +826,9 @@ fn typecheck_file_scope_variable(
             } else {
                 initial_value = entry_initial_value;
             }
-        } else if !matches!(initial_value, InitialValue::Initial(_)) && matches!(entry_initial_value, InitialValue::Tentative) {
+        } else if !matches!(initial_value, InitialValue::Initial(_))
+            && matches!(entry_initial_value, InitialValue::Tentative)
+        {
             initial_value = InitialValue::Tentative;
         }
     }
@@ -836,7 +856,9 @@ pub fn equal_types(a: &Type, b: &Type) -> bool {
     }
 }
 
-fn typecheck_function(declaration: &FunctionDeclaration, symbol_table: &mut SymbolTable) -> Result<FunctionDeclaration> {
+fn typecheck_function(
+    declaration: &FunctionDeclaration, symbol_table: &mut SymbolTable,
+) -> Result<FunctionDeclaration> {
     let FunctionDeclaration(name, parameters, body, function_type, opt_storage_class) = declaration;
 
     let mut global = !matches!(opt_storage_class, Some(StorageClass::Static));
