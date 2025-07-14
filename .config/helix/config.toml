@@ -1,0 +1,36 @@
+#theme = "hex_toxic"
+theme = "solarized_dark"
+
+[editor]
+auto-format = true
+auto-pairs = true
+mouse = true
+cursorline = true
+true-color = true
+color-modes = true
+bufferline = "multiple"
+default-yank-register = '+'
+end-of-line-diagnostics = "hint"
+rulers = [120]
+
+[editor.cursor-shape]
+insert = "bar"
+normal = "block"
+select = "underline"
+
+[editor.indent-guides]
+character = "┆"
+render = true
+
+[editor.lsp]
+auto-signature-help = true
+display-messages = true
+
+[editor.inline-diagnostics]
+cursor-line = "error"
+other-lines = "disable"
+
+[editor.statusline]
+left = ["mode", "spinner", "file-name", "file-type", "total-line-numbers", "file-encoding"]
+center = []
+right = ["selections", "primary-selection-length", "position", "position-percentage", "spacer", "diagnostics", "workspace-diagnostics", "version-control"]

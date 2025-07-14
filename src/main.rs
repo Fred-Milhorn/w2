@@ -21,10 +21,10 @@
 extern crate simple_counter;
 generate_counter!(Counter, usize);
 
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use std::env;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process;
 
 // mod code;
@@ -79,14 +79,16 @@ fn main() -> Result<()> {
                 "codegen"  | "c" => opts.codegen  = true,
                 "emitcode" | "e" => opts.emitcode = true,
                 "compile"  | "m" => opts.compile  = true,
-                _ => usage(&format!("Unknown option: {option:?}")),
+                unknown => usage(&format!("Unknown option: {unknown:?}")),
             }
         } else {
             opts.files.push(option.into());
         }
     }
 
-    println!("{opts:?}");
+    if opts.debug {
+        println!("{opts:?}");
+    }
     
     if opts.files.is_empty() {
         usage("Need at least one file to compile");
@@ -99,11 +101,14 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-fn run(opts: &Opts, file: &Path) -> Result<()> {
-    // Let's just force our input file to a c source file.
-    let file_c = file.with_extension("c");
+fn run(opts: &Opts, file: &PathBuf) -> Result<()> {
+    if let Some(extension) = file.extension()
+        && extension != "c"
+    {
+        return Err(anyhow!("Expected C source file: {file:?}"));
+    }
 
-    let file_i = utils::preprocess(&file_c)?;
+    let file_i = utils::preprocess(file)?;
     let source = fs::read_to_string(&file_i)?;
 
     let tokens = lex::lex(&source)?;
@@ -165,4 +170,3 @@ fn run(opts: &Opts, file: &Path) -> Result<()> {
 
     Ok(())
 }
-

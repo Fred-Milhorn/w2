@@ -1,0 +1,10 @@
+[[language]]
+name = "rust"
+formatter = { command = "rustfmt" }
+
+[[language]]
+name = "haskell"
+formatter = { command = "ormolu" }
+
+[[language]]
+name = "python"
