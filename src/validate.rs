@@ -2,7 +2,7 @@
 //!
 //! Validate AST for symantic errors.
 
-use anyhow::{Result, anyhow};
+use anyhow::{Result, bail};
 use std::collections::HashMap;
 
 use crate::convert::{convert_static_init, convert_to, get_common_type};
@@ -98,10 +98,8 @@ impl IdentMap {
     fn add(
         &mut self, name: &str, new_name: &str, ident_type: &Type, from_current_scope: bool, has_linkage: bool,
     ) -> Option<MapEntry> {
-        self.0.insert(
-            name.to_string(),
-            MapEntry::new(new_name, ident_type, from_current_scope, has_linkage),
-        )
+        self.0
+            .insert(name.to_string(), MapEntry::new(new_name, ident_type, from_current_scope, has_linkage))
     }
 
     fn duplicate(&self) -> IdentMap {
@@ -163,19 +161,14 @@ fn resolve_file_scope_variables(declaration: &VariableDeclaration, ident_map: &m
 fn resolve_parameter(parameter: &Parameter, ident_map: &mut IdentMap) -> Result<Parameter> {
     if let Some(entry) = ident_map.get(&parameter.name) {
         if entry.from_current_scope {
-            return Err(anyhow!(
-                "resolve_declaration: duplicate declaration of variable '{parameter:?}'"
-            ));
+            bail!("resolve_declaration: duplicate declaration of variable '{parameter:?}'");
         }
     }
 
     let unique_name = temp_name(&parameter.name);
     ident_map.add(&parameter.name, &unique_name, &parameter.type_of, true, false);
 
-    Ok(Parameter {
-        name: unique_name,
-        type_of: parameter.type_of.clone(),
-    })
+    Ok(Parameter { name: unique_name, type_of: parameter.type_of.clone() })
 }
 
 fn resolve_function(declaration: &FunctionDeclaration, ident_map: &mut IdentMap) -> Result<FunctionDeclaration> {
@@ -183,7 +176,7 @@ fn resolve_function(declaration: &FunctionDeclaration, ident_map: &mut IdentMap)
 
     if let Some(entry) = ident_map.get(name) {
         if entry.from_current_scope && !entry.has_linkage {
-            return Err(anyhow!("resolve_function: duplicate function declaration: '{name}'"));
+            bail!("resolve_function: duplicate function declaration: '{name}'");
         }
     }
     ident_map.add(name, name, fn_type, true, true);
@@ -203,13 +196,7 @@ fn resolve_function(declaration: &FunctionDeclaration, ident_map: &mut IdentMap)
         .map(|body| resolve_block(body, &mut inner_map))
         .transpose()?;
 
-    Ok(FunctionDeclaration(
-        name.clone(),
-        new_params,
-        new_body,
-        fn_type.clone(),
-        opt_storage_class.clone(),
-    ))
+    Ok(FunctionDeclaration(name.clone(), new_params, new_body, fn_type.clone(), opt_storage_class.clone()))
 }
 
 fn resolve_block(block: &Block, ident_map: &mut IdentMap) -> Result<Block> {
@@ -220,14 +207,10 @@ fn resolve_block(block: &Block, ident_map: &mut IdentMap) -> Result<Block> {
             BlockItem::D(declaration) => BlockItem::D(match declaration {
                 Declaration::FunDecl(fundecl) => match fundecl {
                     FunctionDeclaration(name, _, Some(_), _, _) => {
-                        return Err(anyhow!(
-                            "resolve_block: nested function definitions not allowed: {name:?}"
-                        ));
+                        bail!("resolve_block: nested function definitions not allowed: {name:?}");
                     }
                     FunctionDeclaration(name, _, _, _, Some(StorageClass::Static)) => {
-                        return Err(anyhow!(
-                            "resolve_block: function declarations cannot be static: {name:?}"
-                        ));
+                        bail!("resolve_block: function declarations cannot be static: {name:?}");
                     }
                     _ => Declaration::FunDecl(resolve_function(fundecl, ident_map)?),
                 },
@@ -246,9 +229,7 @@ fn resolve_local_variable(declaration: &VariableDeclaration, ident_map: &mut Ide
 
     if let Some(entry) = ident_map.get(name) {
         if entry.from_current_scope && !(entry.has_linkage && matches!(opt_storage_class, Some(StorageClass::Extern))) {
-            return Err(anyhow!(
-                "resolve_local_variable: conflicting local declarations of variable '{name}'"
-            ));
+            bail!("resolve_local_variable: conflicting local declarations of variable '{name}'");
         }
     }
 
@@ -266,12 +247,7 @@ fn resolve_local_variable(declaration: &VariableDeclaration, ident_map: &mut Ide
                 None => None,
             };
 
-            Ok(VariableDeclaration(
-                unique_name,
-                resolved_init,
-                var_type.clone(),
-                opt_storage_class.clone(),
-            ))
+            Ok(VariableDeclaration(unique_name, resolved_init, var_type.clone(), opt_storage_class.clone()))
         }
     }
 }
@@ -311,13 +287,7 @@ fn resolve_statement(statement: &Statement, ident_map: &IdentMap) -> Result<Stat
             let resolved_condition = resolve_optional_expression(condition, &new_ident_map)?;
             let resolved_post = resolve_optional_expression(post, &new_ident_map)?;
             let resolved_body = resolve_statement(body, &new_ident_map)?;
-            Statement::For(
-                resolved_init,
-                resolved_condition,
-                resolved_post,
-                Box::new(resolved_body),
-                label.clone(),
-            )
+            Statement::For(resolved_init, resolved_condition, resolved_post, Box::new(resolved_body), label.clone())
         }
         Statement::None => Statement::None,
     };
@@ -362,7 +332,7 @@ fn resolve_expression(expression: &Expression, ident_map: &IdentMap) -> Result<E
                 Box::new(resolve_expression(right, ident_map)?),
                 assign_type.clone(),
             ),
-            _ => return Err(anyhow!("resolve_expression: Illegal lvalue: '{left:?}'")),
+            _ => bail!("resolve_expression: Illegal lvalue: '{left:?}'"),
         },
         Expression::CompoundAssignment(operator, left, right, comp_type) => match &**left {
             Expression::Var(_, _) => Expression::CompoundAssignment(
@@ -371,25 +341,14 @@ fn resolve_expression(expression: &Expression, ident_map: &IdentMap) -> Result<E
                 Box::new(resolve_expression(right, ident_map)?),
                 comp_type.clone(),
             ),
-            _ => return Err(anyhow!("resolve_expression: Illegal lvalue: '{left:?}'")),
+            _ => bail!("resolve_expression: Illegal lvalue: '{left:?}'"),
         },
         Expression::Var(name, _) => match ident_map.get(name) {
             Some(entry) => Expression::Var(entry.new_name, entry.has_type),
-            None => return Err(anyhow!("resolve_expression: Undeclared variable: '{name}'")),
+            None => bail!("resolve_expression: Undeclared variable: '{name}'"),
         },
         Expression::Unary(operator, dst, unary_type) => {
             let resolved = resolve_expression(dst, ident_map)?;
-            if matches!(
-                operator,
-                UnaryOperator::PreIncrement
-                    | UnaryOperator::PreDecrement
-                    | UnaryOperator::PostIncrement
-                    | UnaryOperator::PostDecrement
-            ) && !matches!(resolved, Expression::Var(_, _))
-            {
-                return Err(anyhow!("resolve_expression: Illegal lvalue: '{dst:?}'"));
-            }
-
             Expression::Unary(operator.clone(), Box::new(resolved), unary_type.clone())
         }
         Expression::Binary(operator, left, right, exp_type) => Expression::Binary(
@@ -415,7 +374,7 @@ fn resolve_expression(expression: &Expression, ident_map: &IdentMap) -> Result<E
 
                 Expression::FunctionCall(new_name, new_args, fun_type.clone())
             }
-            None => return Err(anyhow!("resolve_expression: undeclarated function '{name}'")),
+            None => bail!("resolve_expression: undeclarated function '{name}'"),
         },
         _ => expression.clone(),
     };
@@ -436,11 +395,11 @@ fn label_statement(statement: &Statement, label: &Option<Label>) -> Result<State
         Statement::Compound(block) => Statement::Compound(label_block(block, label)?),
         Statement::Break(_) => match label {
             Some(name) => Statement::Break(name.clone()),
-            None => return Err(anyhow!("break statement outside of loop")),
+            None => bail!("break statement outside of loop"),
         },
         Statement::Continue(_) => match label {
             Some(name) => Statement::Continue(name.clone()),
-            None => return Err(anyhow!("continue statement outside of loop")),
+            None => bail!("continue statement outside of loop"),
         },
         Statement::While(condition, body, _) => {
             let while_label = temp_name("while");
@@ -455,13 +414,7 @@ fn label_statement(statement: &Statement, label: &Option<Label>) -> Result<State
         Statement::For(for_init, condition, post, body, _) => {
             let for_label = temp_name("for");
             let labeled_body = label_statement(body, &Some(for_label.clone()))?;
-            Statement::For(
-                for_init.clone(),
-                condition.clone(),
-                post.clone(),
-                Box::new(labeled_body),
-                for_label,
-            )
+            Statement::For(for_init.clone(), condition.clone(), post.clone(), Box::new(labeled_body), for_label)
         }
         statement => statement.clone(),
     };
@@ -506,9 +459,7 @@ fn typecheck_for_init(for_init: &ForInit, symbol_table: &mut SymbolTable) -> Res
     let new_for_init = match for_init {
         ForInit::InitDecl(declaration) => {
             if let VariableDeclaration(name, _, _, Some(_)) = declaration {
-                return Err(anyhow!(
-                    "typecheck_for_init: Storage class on for-init not allowed: {name:?}"
-                ));
+                bail!("typecheck_for_init: Storage class on for-init not allowed: {name:?}");
             }
             ForInit::InitDecl(typecheck_local_variable(declaration, symbol_table)?)
         }
@@ -527,9 +478,7 @@ fn typecheck_statement(statement: &Statement, name: &str, symbol_table: &mut Sym
                 Some(entry) => match entry.symbol_type {
                     Type::FunType(_, ret_type) => convert_to(typed_exp, *ret_type.clone()),
                     _ => {
-                        return Err(anyhow!(
-                            "typecheck_expression: unexpected return type for {name:?}: {entry:?}"
-                        ));
+                        bail!("typecheck_expression: unexpected return type for {name:?}: {entry:?}");
                     }
                 },
                 None => typed_exp,
@@ -584,7 +533,7 @@ fn typecheck_expression(expression: &Expression, symbol_table: &mut SymbolTable)
                 Type::FunType(param_types, ret_type) => {
                     if let Some(args) = opt_args {
                         if args.len() != param_types.len() {
-                            return Err(anyhow!("Function called with wrong number of arguments: {name:?}"));
+                            bail!("Function called with wrong number of arguments: {name:?}");
                         }
                     }
 
@@ -602,18 +551,18 @@ fn typecheck_expression(expression: &Expression, symbol_table: &mut SymbolTable)
 
                     Expression::FunctionCall(name.clone(), new_args, *ret_type.clone())
                 }
-                _ => return Err(anyhow!("Variable used as function name: {name:?}")),
+                _ => bail!("Variable used as function name: {name:?}"),
             },
-            None => return Err(anyhow!("Undefined function call: {name:?}")),
+            None => bail!("Undefined function call: {name:?}"),
         },
         Expression::Var(name, _) => match symbol_table.get(name) {
             Some(entry) => {
                 if let Type::FunType(_, _) = entry.symbol_type {
-                    return Err(anyhow!("Function name used as variable: {name:?}"));
+                    bail!("Function name used as variable: {name:?}");
                 }
                 Expression::Var(name.clone(), entry.symbol_type)
             }
-            None => return Err(anyhow!("Undeclared variable in expression: {name:?}")),
+            None => bail!("Undeclared variable in expression: {name:?}"),
         },
         Expression::Assignment(lhs, rhs, _assign_type) => {
             let typed_left = typecheck_expression(lhs, symbol_table)?;
@@ -716,16 +665,12 @@ fn typecheck_local_variable(
     let new_declaration = match opt_storage_class {
         Some(StorageClass::Extern) => {
             if init.is_some() {
-                return Err(anyhow!(
-                    "typecheck_local_variable: Initializer on local extern variable declaration: {name:?}"
-                ));
+                bail!("typecheck_local_variable: Initializer on local extern variable declaration: {name:?}");
             }
             match symbol_table.get(name) {
                 Some(entry) => {
                     if entry.symbol_type != *var_type {
-                        return Err(anyhow!(
-                            "typecheck_local_variable: function redeclared as variable: {entry:?}"
-                        ));
+                        bail!("typecheck_local_variable: function redeclared as variable: {entry:?}");
                     }
                 }
                 None => {
@@ -742,23 +687,12 @@ fn typecheck_local_variable(
         }
         Some(StorageClass::Static) => {
             let initial_value = convert_static_init(name, var_type, init)?;
-            symbol_table.add(
-                name,
-                Symbol {
-                    symbol_type: var_type.clone(),
-                    attrs: IdentAttrs::Static(initial_value, false),
-                },
-            );
+            symbol_table
+                .add(name, Symbol { symbol_type: var_type.clone(), attrs: IdentAttrs::Static(initial_value, false) });
             declaration.clone()
         }
         _ => {
-            symbol_table.add(
-                name,
-                Symbol {
-                    symbol_type: var_type.clone(),
-                    attrs: IdentAttrs::Local,
-                },
-            );
+            symbol_table.add(name, Symbol { symbol_type: var_type.clone(), attrs: IdentAttrs::Local });
             let new_init = init
                 .as_ref()
                 .map(|expression| typecheck_expression(expression, symbol_table))
@@ -786,16 +720,14 @@ fn typecheck_file_scope_variable(
             _ => InitialValue::Tentative,
         },
         _ => {
-            return Err(anyhow!(
-                "typecheck_file_scope_variable: non-constant initializer: {init:?}"
-            ));
+            bail!("typecheck_file_scope_variable: non-constant initializer: {init:?}");
         }
     };
     let mut global = !matches!(opt_storage_class, Some(StorageClass::Static));
 
     if let Some(entry) = symbol_table.get(name) {
         if !matches!(entry.symbol_type, Type::Int | Type::Long) {
-            return Err(anyhow!("Function redeclared as variable: '{entry:?}'"));
+            bail!("Function redeclared as variable: '{entry:?}'");
         }
         let mut entry_is_global = false;
         let mut entry_initial_value = InitialValue::NoInitializer;
@@ -806,23 +738,19 @@ fn typecheck_file_scope_variable(
         if matches!(opt_storage_class, Some(StorageClass::Extern)) {
             global = entry_is_global;
         } else if global != entry_is_global {
-            return Err(anyhow!(
-                "typecheck_file_scope_variable: conflicting variable linkage: {entry:?}"
-            ));
+            bail!("typecheck_file_scope_variable: conflicting variable linkage: {entry:?}");
         }
         if entry.symbol_type != *var_type {
-            return Err(anyhow!(
+            bail!(
                 "typecheck_file_scope_variable: for variable {:?}, conflicting file scope variable types: {:?} vs. {:?}",
                 name,
                 entry.symbol_type,
                 *var_type,
-            ));
+            );
         }
         if matches!(entry_initial_value, InitialValue::Initial(_)) {
             if matches!(initial_value, InitialValue::Initial(_)) {
-                return Err(anyhow!(
-                    "typecheck_file_scope_variable: conflicting file scope variable definitions: {entry:?}"
-                ));
+                bail!("typecheck_file_scope_variable: conflicting file scope variable definitions: {entry:?}");
             } else {
                 initial_value = entry_initial_value;
             }
@@ -833,10 +761,7 @@ fn typecheck_file_scope_variable(
         }
     }
 
-    let new_symbol = Symbol {
-        symbol_type: var_type.clone(),
-        attrs: IdentAttrs::Static(initial_value, global),
-    };
+    let new_symbol = Symbol { symbol_type: var_type.clone(), attrs: IdentAttrs::Static(initial_value, global) };
     symbol_table.add(name, new_symbol);
 
     Ok(declaration.clone())
@@ -850,7 +775,10 @@ pub fn equal_types(a: &Type, b: &Type) -> bool {
         (Type::FunType(params_a, ret_a), Type::FunType(params_b, ret_b)) => {
             params_a.len() == params_b.len()
                 && equal_types(ret_a, ret_b)
-                && params_a.iter().zip(params_b.iter()).all(|(p, q)| equal_types(p, q))
+                && params_a
+                    .iter()
+                    .zip(params_b.iter())
+                    .all(|(p, q)| equal_types(p, q))
         }
         _ => false,
     }
@@ -866,7 +794,7 @@ fn typecheck_function(
 
     if let Some(entry) = symbol_table.get(name) {
         if !equal_types(&entry.symbol_type, function_type) {
-            return Err(anyhow!("Incompatible function declarations: '{entry:?}'"));
+            bail!("Incompatible function declarations: '{entry:?}'");
         }
         let mut entry_is_global = false;
         if let IdentAttrs::Function(entry_defined, entry_scope) = entry.attrs {
@@ -874,10 +802,10 @@ fn typecheck_function(
             entry_is_global = entry_scope;
         }
         if already_defined && body.is_some() {
-            return Err(anyhow!("Function defined more than once: {entry:?}'"));
+            bail!("Function defined more than once: {entry:?}'");
         }
         if matches!(opt_storage_class, Some(StorageClass::Static)) && entry_is_global {
-            return Err(anyhow!("Static function declaration follows non-static: {entry:?}"));
+            bail!("Static function declaration follows non-static: {entry:?}");
         }
         global = entry_is_global;
     }
@@ -894,13 +822,8 @@ fn typecheck_function(
         Some(block) => {
             if let Some(params) = parameters {
                 for param in params {
-                    symbol_table.add(
-                        &param.name,
-                        Symbol {
-                            symbol_type: param.type_of.clone(),
-                            attrs: IdentAttrs::Local,
-                        },
-                    );
+                    symbol_table
+                        .add(&param.name, Symbol { symbol_type: param.type_of.clone(), attrs: IdentAttrs::Local });
                 }
             }
             Some(typecheck_block(block, name, symbol_table)?)

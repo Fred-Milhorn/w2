@@ -2,7 +2,7 @@
 //!
 //! Creates an AST from the token list supplied by the lexer.
 
-use anyhow::{Result, anyhow};
+use anyhow::{Result, bail};
 use std::iter::Peekable;
 use std::mem;
 use std::slice::Iter;
@@ -22,10 +22,6 @@ pub enum UnaryOperator {
     Complement,
     Negate,
     Not,
-    PreIncrement,
-    PreDecrement,
-    PostIncrement,
-    PostDecrement,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -161,12 +157,7 @@ pub struct Parameter {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct VariableDeclaration(
-    pub Identifier,
-    pub Option<Expression>,
-    pub Type,
-    pub Option<StorageClass>,
-);
+pub struct VariableDeclaration(pub Identifier, pub Option<Expression>, pub Type, pub Option<StorageClass>);
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct FunctionDeclaration(
@@ -198,7 +189,7 @@ impl TokenStream<'_> {
     fn peek(&mut self) -> Result<&Token> {
         let token = match self.0.peek() {
             Some(token) => token,
-            None => return Err(anyhow!("Unexpected end of token stream")),
+            None => bail!("Unexpected end of token stream"),
         };
 
         Ok(token)
@@ -207,7 +198,7 @@ impl TokenStream<'_> {
     fn next(&mut self) -> Result<&Token> {
         let token = match self.0.next() {
             Some(token) => token,
-            None => return Err(anyhow!("Unexpected end of token stream")),
+            None => bail!("Unexpected end of token stream"),
         };
 
         Ok(token)
@@ -217,7 +208,7 @@ impl TokenStream<'_> {
         let token = self.next()?;
 
         if mem::discriminant(token) != mem::discriminant(&expected) {
-            return Err(anyhow!("Expected token: '{expected:?}', Unexpected token: '{token:?}'"));
+            bail!("Expected token: '{expected:?}', Unexpected token: '{token:?}'");
         }
 
         Ok(token)
@@ -248,15 +239,10 @@ fn parse_variable_declaration(
             tokens.next()?;
             None
         }
-        token => return Err(anyhow!("parse_variable_declaration: unexpected token: '{token:?}'")),
+        token => bail!("parse_variable_declaration: unexpected token: '{token:?}'"),
     };
 
-    Ok(VariableDeclaration(
-        name,
-        expression,
-        specifier.type_of.clone(),
-        specifier.storage_class.clone(),
-    ))
+    Ok(VariableDeclaration(name, expression, specifier.type_of.clone(), specifier.storage_class.clone()))
 }
 
 fn parse_parameter_list(tokens: &mut TokenStream) -> Result<Option<Parameters>> {
@@ -269,17 +255,14 @@ fn parse_parameter_list(tokens: &mut TokenStream) -> Result<Option<Parameters>> 
                 let specifier = parse_type_and_storage_class(tokens)?;
                 let identifier = match tokens.next()? {
                     Token::Identifier(name) => name.to_string(),
-                    token => return Err(anyhow!("parse_parameter: Unexpected token: '{token:?}'")),
+                    token => bail!("parse_parameter: Unexpected token: '{token:?}'"),
                 };
-                params.push(Parameter {
-                    name: identifier,
-                    type_of: specifier.type_of,
-                });
+                params.push(Parameter { name: identifier, type_of: specifier.type_of });
             }
             Token::Comma => {
                 tokens.next()?;
                 if *tokens.peek()? == Token::CloseParen {
-                    return Err(anyhow!("Unexpected trailing comma in function definition"));
+                    bail!("Unexpected trailing comma in function definition");
                 }
             }
             Token::Void => {
@@ -287,7 +270,7 @@ fn parse_parameter_list(tokens: &mut TokenStream) -> Result<Option<Parameters>> 
                 tokens.expect(Token::CloseParen)?;
                 return Ok(None);
             }
-            token => return Err(anyhow!("parse_parameter_list: unexpected token '{token:?}'")),
+            token => bail!("parse_parameter_list: unexpected token '{token:?}'"),
         }
     }
     tokens.expect(Token::CloseParen)?;
@@ -306,7 +289,7 @@ fn parse_function_declaration(
             None
         }
         Token::OpenBrace => Some(parse_block(tokens)?),
-        token => return Err(anyhow!("parse_function_declaration: unexpected token: '{token:?}'")),
+        token => bail!("parse_function_declaration: unexpected token: '{token:?}'"),
     };
 
     let param_types = {
@@ -321,13 +304,7 @@ fn parse_function_declaration(
 
     let function_type = Type::FunType(Box::new(param_types), Box::new(specifier.type_of.clone()));
 
-    Ok(FunctionDeclaration(
-        name,
-        optional_params,
-        optional_body,
-        function_type,
-        specifier.storage_class.clone(),
-    ))
+    Ok(FunctionDeclaration(name, optional_params, optional_body, function_type, specifier.storage_class.clone()))
 }
 
 fn parse_constant(token: &Token) -> Result<Expression> {
@@ -345,9 +322,7 @@ fn parse_constant(token: &Token) -> Result<Expression> {
             Expression::Constant(Const::ConstLong(number), Type::Long)
         }
         _ => {
-            return Err(anyhow!(
-                "parse_constant: unexpected token while parsing constant: {token:?}"
-            ));
+            bail!("parse_constant: unexpected token while parsing constant: {token:?}");
         }
     };
 
@@ -358,7 +333,7 @@ fn parse_type(specifiers: &Vec<Type>) -> Result<Type> {
     let parsed_type = match specifiers[..] {
         [Type::Int] => Type::Int,
         [Type::Long] | [Type::Long, Type::Int] | [Type::Int, Type::Long] => Type::Long,
-        _ => return Err(anyhow!("parse_type: Unrecognized type specifiers: {specifiers:?}")),
+        _ => bail!("parse_type: Unrecognized type specifiers: {specifiers:?}"),
     };
 
     Ok(parsed_type)
@@ -382,10 +357,7 @@ fn parse_type_and_storage_class(tokens: &mut TokenStream) -> Result<Specifier> {
     let identifier_type = parse_type(&types)?;
 
     if storage_classes.len() > 1 {
-        return Err(anyhow!(
-            "parse_type_and_storage: Invalid storage class: {:?}",
-            storage_classes
-        ));
+        bail!("parse_type_and_storage: Invalid storage class: {:?}", storage_classes);
     }
 
     let identifier_storage_class = match storage_classes.len() {
@@ -393,10 +365,7 @@ fn parse_type_and_storage_class(tokens: &mut TokenStream) -> Result<Specifier> {
         _ => None,
     };
 
-    Ok(Specifier {
-        type_of: identifier_type,
-        storage_class: identifier_storage_class,
-    })
+    Ok(Specifier { type_of: identifier_type, storage_class: identifier_storage_class })
 }
 
 fn parse_declaration(tokens: &mut TokenStream) -> Result<Declaration> {
@@ -408,7 +377,7 @@ fn parse_declaration(tokens: &mut TokenStream) -> Result<Declaration> {
             tokens.next()?;
             identifier
         }
-        token => return Err(anyhow!("parse_declaration: Identifier expected: {token:?}")),
+        token => bail!("parse_declaration: Identifier expected: {token:?}"),
     };
 
     let declaration = match tokens.peek()? {
@@ -509,13 +478,7 @@ fn parse_statement(tokens: &mut TokenStream) -> Result<Statement> {
             let optional_exp1 = parse_optional_expression(tokens, Token::Semicolon)?;
             let optional_exp2 = parse_optional_expression(tokens, Token::CloseParen)?;
             let statement = parse_statement(tokens)?;
-            Statement::For(
-                for_init,
-                optional_exp1,
-                optional_exp2,
-                Box::new(statement),
-                temp_name("for"),
-            )
+            Statement::For(for_init, optional_exp1, optional_exp2, Box::new(statement), temp_name("for"))
         }
         Token::Semicolon => parse_null(tokens)?,
         Token::Return => parse_return(tokens)?,
@@ -551,9 +514,7 @@ fn parse_for_init(tokens: &mut TokenStream) -> Result<ForInit> {
             let declaration = parse_declaration(tokens)?;
             match declaration {
                 Declaration::FunDecl(_) => {
-                    return Err(anyhow!(
-                        "parse_for_init: Unexpected function declaration: {declaration:?}"
-                    ));
+                    bail!("parse_for_init: Unexpected function declaration: {declaration:?}");
                 }
                 Declaration::VarDecl(variable_declaration) => ForInit::InitDecl(variable_declaration),
             }
@@ -599,7 +560,7 @@ fn parse_binary(tokens: &mut TokenStream) -> Result<BinaryOperator> {
         Token::BitXorAssign     => BinaryOperator::BitXor,
         Token::LeftshiftAssign  => BinaryOperator::Leftshift,
         Token::RightshiftAssign => BinaryOperator::Rightshift,
-        _ => return Err(anyhow!("Unexpected token for binary operator {token:?}")),
+        _ => bail!("Unexpected token for binary operator {token:?}"),
     };
 
     Ok(operator)
@@ -611,7 +572,7 @@ fn parse_unary(tokens: &mut TokenStream) -> Result<UnaryOperator> {
         Token::Complement => UnaryOperator::Complement,
         Token::Minus => UnaryOperator::Negate,
         Token::Not => UnaryOperator::Not,
-        _ => return Err(anyhow!("Unexpected token for unary operator {token:?}")),
+        _ => bail!("Unexpected token for unary operator {token:?}"),
     };
 
     Ok(operator)
@@ -625,26 +586,12 @@ fn parse_conditional_middle(tokens: &mut TokenStream) -> Result<Expression> {
     Ok(middle)
 }
 
-fn parse_inc_dec(tokens: &mut TokenStream) -> Result<UnaryOperator> {
-    let token = tokens.next()?;
-    let operator = match token {
-        Token::Increment => UnaryOperator::PostIncrement,
-        Token::Decrement => UnaryOperator::PostDecrement,
-        _ => return Err(anyhow!("parse_inc_dec: Unexpected token: '{token:?}")),
-    };
-
-    Ok(operator)
-}
-
 fn parse_expression(tokens: &mut TokenStream, min_precedence: i32) -> Result<Expression> {
     let mut left = parse_factor(tokens)?;
     let mut token = tokens.peek()?.clone();
 
-    while (token.is_binary_operator() || token.is_inc_dec()) && token.precedence() >= min_precedence {
-        left = if token.is_inc_dec() {
-            let operator = parse_inc_dec(tokens)?;
-            Expression::Unary(operator, Box::new(left), Type::None)
-        } else if token == Token::Assignment {
+    while token.is_binary_operator() && token.precedence() >= min_precedence {
+        left = if token == Token::Assignment {
             tokens.next()?;
             let right = parse_expression(tokens, token.precedence())?;
             Expression::Assignment(Box::new(left), Box::new(right), Type::None)
@@ -677,7 +624,7 @@ fn parse_function_call(tokens: &mut TokenStream, name: &String) -> Result<Expres
         if *tokens.peek()? == Token::Comma {
             tokens.next()?;
             if *tokens.peek()? == Token::CloseParen {
-                return Err(anyhow!("Unexpected trailing comma in function call: {name:?}"));
+                bail!("Unexpected trailing comma in function call: {name:?}");
             }
         }
     }
@@ -696,16 +643,6 @@ fn parse_factor(tokens: &mut TokenStream) -> Result<Expression> {
         token @ (Token::Constant(_) | Token::LConstant(_)) => {
             tokens.next()?;
             parse_constant(&token)?
-        }
-        Token::Increment => {
-            tokens.next()?;
-            let rhs = parse_factor(tokens)?;
-            Expression::Unary(UnaryOperator::PreIncrement, Box::new(rhs), Type::None)
-        }
-        Token::Decrement => {
-            tokens.next()?;
-            let rhs = parse_factor(tokens)?;
-            Expression::Unary(UnaryOperator::PreDecrement, Box::new(rhs), Type::None)
         }
         Token::Identifier(name) => {
             tokens.next()?;
@@ -741,7 +678,7 @@ fn parse_factor(tokens: &mut TokenStream) -> Result<Expression> {
                 }
             }
         }
-        token => return Err(anyhow!("parse_expression: Unexpected token: '{token:?}'")),
+        token => bail!("parse_expression: Unexpected token: '{token:?}'"),
     };
 
     Ok(expression)

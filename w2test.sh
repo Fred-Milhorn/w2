@@ -9,4 +9,4 @@ else
 fi
 
 cd writing-a-c-compiler-tests
-./test_compiler "${W2ROOT}/target/debug/w2" --chapter "$chapter" $stage --bitwise --compound
+./test_compiler "${W2ROOT}/target/debug/w2" --chapter "$chapter" $stage

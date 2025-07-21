@@ -21,17 +21,17 @@
 extern crate simple_counter;
 generate_counter!(Counter, usize);
 
-use anyhow::{Result, anyhow};
+use anyhow::{Result, bail};
 use std::env;
 use std::fs;
 use std::path::PathBuf;
 use std::process;
 
 // mod code;
+mod convert;
 mod lex;
 mod parse;
-// mod tacky;
-mod convert;
+mod tacky;
 mod utils;
 mod validate;
 
@@ -105,7 +105,7 @@ fn run(opts: &Opts, file: &PathBuf) -> Result<()> {
     if let Some(extension) = file.extension()
         && extension != "c"
     {
-        return Err(anyhow!("Expected C source file: {file:?}"));
+        bail!("Expected C source file: {file:?}");
     }
 
     let file_i = utils::preprocess(file)?;
@@ -127,7 +127,7 @@ fn run(opts: &Opts, file: &PathBuf) -> Result<()> {
         process::exit(0);
     }
 
-    let (validated_ast, _symbol_table) = validate::validate(ast)?;
+    let (validated_ast, symbol_table) = validate::validate(ast)?;
     if opts.debug {
         println!("validate: {validated_ast:?}\n");
     }
@@ -135,13 +135,13 @@ fn run(opts: &Opts, file: &PathBuf) -> Result<()> {
         process::exit(0);
     }
 
-    // let tacky = tacky::generate(&validated_ast, &symbol_table)?;
-    // if opts.debug {
-    //     println!("tacky: {:?}\n", tacky);
-    // }
-    // if opts.tacky {
-    //     process::exit(0);
-    // }
+    let tacky = tacky::generate(&validated_ast, &symbol_table)?;
+    if opts.debug {
+        println!("tacky: {tacky:?}\n");
+    }
+    if opts.tacky {
+        process::exit(0);
+    }
 
     // let code = code::generate(&tacky, &symbol_table);
     // if opts.debug {

@@ -28,9 +28,7 @@ pub fn convert_static_init(name: &str, var_type: &Type, init: &Option<Expression
                 Type::Int => InitialValue::Initial(StaticInit::IntInit(*number as i32)),
                 Type::Long => InitialValue::Initial(StaticInit::LongInit(*number)),
                 _ => {
-                    return Err(anyhow!(
-                        "convert_static_init: unexpected type {var_type:?} for variable {name:?}"
-                    ));
+                    return Err(anyhow!("convert_static_init: unexpected type {var_type:?} for variable {name:?}"));
                 }
             },
         },
@@ -38,9 +36,7 @@ pub fn convert_static_init(name: &str, var_type: &Type, init: &Option<Expression
             Type::Int => InitialValue::Initial(StaticInit::IntInit(0)),
             Type::Long => InitialValue::Initial(StaticInit::LongInit(0)),
             _ => {
-                return Err(anyhow!(
-                    "convert_static_init: unexpected type {var_type:?} for variable {name:?}"
-                ));
+                return Err(anyhow!("convert_static_init: unexpected type {var_type:?} for variable {name:?}"));
             }
         },
         _ => {

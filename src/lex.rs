@@ -24,8 +24,6 @@ pub enum Token {
     CloseBrace,
     Semicolon,
     Complement,
-    Decrement,
-    Increment,
     Minus,
     Plus,
     Multiply,
@@ -72,8 +70,6 @@ pub type TokenList = Vec<Token>;
 impl Token {
     pub fn precedence(&self) -> i32 {
         match self {
-            Token::Increment        => 0,
-            Token::Decrement        => 0,
             Token::Multiply         => 50,
             Token::Divide           => 50,
             Token::Remainder        => 50,
@@ -144,10 +140,6 @@ impl Token {
         )
     }
 
-    pub fn is_inc_dec(&self) -> bool {
-        matches!(self, Token::Increment | Token::Decrement)
-    }
-
     pub fn is_compound_assignment(&self) -> bool {
         matches!(
             self,
@@ -173,7 +165,7 @@ pub fn lex(input: &str) -> Result<TokenList> {
     static RE_CONSTANT  : Lazy<Regex> = Lazy::new(|| Regex::new(r"^[0-9]+\b").unwrap());
     static RE_SEPARATORS: Lazy<Regex> = Lazy::new(|| Regex::new(r"^[\,\{\}\(\)\;\?\:]").unwrap());
     static RE_OPERATORS1: Lazy<Regex> = Lazy::new(|| Regex::new(r"^\+=|^\-=|^\*=|^/=|^\%=|^\&=|^\|=|^\^=|^<<=|^>>=").unwrap());
-    static RE_OPERATORS2: Lazy<Regex> = Lazy::new(|| Regex::new(r"^\-\-|^\+\+|^&&|^<<|^>>|^\|\||^==|^!=|^<=|^>=").unwrap());
+    static RE_OPERATORS2: Lazy<Regex> = Lazy::new(|| Regex::new(r"^&&|^<<|^>>|^\|\||^==|^!=|^<=|^>=").unwrap());
     static RE_OPERATORS3: Lazy<Regex> = Lazy::new(|| Regex::new(r"^[=!\-~+*/%|&^><]").unwrap());
 
     let mut tokens: TokenList = Vec::new();
@@ -253,8 +245,6 @@ pub fn lex(input: &str) -> Result<TokenList> {
                     ">=" => Token::GreaterOrEqual,
                     "<<" => Token::Leftshift,
                     ">>" => Token::Rightshift,
-                    "--" => Token::Decrement,
-                    "++" => Token::Increment,
                     operator => return Err(anyhow!("Illegal operator: '{operator}'")),
                 };
                 (token, matched.len())
