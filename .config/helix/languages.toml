@@ -1,6 +1,6 @@
 [[language]]
 name = "rust"
-formatter = { command = "rustfmt" }
+formatter = { command = "rustfmt", args = ["+nightly"] }
 
 [[language]]
 name = "haskell"

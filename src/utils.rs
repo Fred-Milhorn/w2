@@ -28,12 +28,7 @@ pub fn preprocess(file_c: &PathBuf) -> Result<PathBuf> {
     let file_i = file_c.with_extension("i");
 
     let mut preprocess = Command::new("gcc");
-    preprocess
-        .arg("-E")
-        .arg("-P")
-        .arg(file_c)
-        .arg("-o")
-        .arg(&file_i);
+    preprocess.arg("-E").arg("-P").arg(file_c).arg("-o").arg(&file_i);
     run_cli(&mut preprocess)?;
 
     Ok(file_i)
@@ -70,13 +65,13 @@ pub fn run_cli(command: &mut Command) -> Result<()> {
         Ok(output) => match output.status.code() {
             Some(exit_code) => match exit_code {
                 0 => Ok(()),
-                _ => Err(anyhow!("{}non-zero exit code: {exit_code}", String::from_utf8_lossy(&output.stderr))),
+                _ => Err(anyhow!("{}non-zero exit code: {exit_code}", String::from_utf8_lossy(&output.stderr)))
             },
             None => {
                 // Apparently, this can happen.
                 Err(anyhow!("Process terminated by signal"))
             }
-        },
+        }
     };
 
     // Debug formatter double-quotes all the args! ARGH!

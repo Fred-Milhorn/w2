@@ -61,7 +61,7 @@ pub enum Token {
     Continue,
     Comma,
     Static,
-    Extern,
+    Extern
 }
 
 pub type TokenList = Vec<Token>;

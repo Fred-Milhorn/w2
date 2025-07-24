@@ -21,7 +21,7 @@ pub type Declarations = Vec<Declaration>;
 pub enum UnaryOperator {
     Complement,
     Negate,
-    Not,
+    Not
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -43,13 +43,13 @@ pub enum BinaryOperator {
     LessThan,
     LessOrEqual,
     GreaterThan,
-    GreaterOrEqual,
+    GreaterOrEqual
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Const {
     ConstInt(i32),
-    ConstLong(i64),
+    ConstLong(i64)
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -62,7 +62,7 @@ pub enum Expression {
     Assignment(Box<Expression>, Box<Expression>, Type),
     CompoundAssignment(BinaryOperator, Box<Expression>, Box<Expression>, Type),
     Conditional(Box<Expression>, Box<Expression>, Box<Expression>, Type),
-    FunctionCall(Identifier, Option<FunctionArgs>, Type),
+    FunctionCall(Identifier, Option<FunctionArgs>, Type)
 }
 
 #[allow(dead_code)]
@@ -103,13 +103,13 @@ impl Expression {
 #[derive(Debug, Clone, PartialEq)]
 pub enum BlockItem {
     S(Statement),
-    D(Declaration),
+    D(Declaration)
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ForInit {
     InitDecl(VariableDeclaration),
-    InitExp(Option<Expression>),
+    InitExp(Option<Expression>)
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -123,13 +123,13 @@ pub enum Statement {
     While(Expression, Box<Statement>, Label),
     DoWhile(Box<Statement>, Expression, Label),
     For(ForInit, Option<Expression>, Option<Expression>, Box<Statement>, Label),
-    None,
+    None
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum StorageClass {
     Static,
-    Extern,
+    Extern
 }
 
 type ParameterTypes = Box<Vec<Type>>;
@@ -141,42 +141,40 @@ pub enum Type {
     Int,
     Long,
     FunType(ParameterTypes, ReturnType),
-    None,
+    None
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Specifier {
-    type_of: Type,
-    storage_class: Option<StorageClass>,
+    type_of:       Type,
+    storage_class: Option<StorageClass>
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Parameter {
-    pub name: String,
-    pub type_of: Type,
+    pub name:    String,
+    pub type_of: Type
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct VariableDeclaration(pub Identifier, pub Option<Expression>, pub Type, pub Option<StorageClass>);
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct FunctionDeclaration(
-    pub Identifier,
-    pub Option<Parameters>,
-    pub Option<Block>,
-    pub Type,
-    pub Option<StorageClass>,
-);
+pub struct FunctionDeclaration(pub Identifier,
+                               pub Option<Parameters>,
+                               pub Option<Block>,
+                               pub Type,
+                               pub Option<StorageClass>);
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Declaration {
     FunDecl(FunctionDeclaration),
-    VarDecl(VariableDeclaration),
+    VarDecl(VariableDeclaration)
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Ast {
-    Program(Declarations),
+    Program(Declarations)
 }
 
 pub struct TokenStream<'a>(Peekable<Iter<'a, Token>>);
@@ -189,7 +187,7 @@ impl TokenStream<'_> {
     fn peek(&mut self) -> Result<&Token> {
         let token = match self.0.peek() {
             Some(token) => token,
-            None => bail!("Unexpected end of token stream"),
+            None => bail!("Unexpected end of token stream")
         };
 
         Ok(token)
@@ -198,7 +196,7 @@ impl TokenStream<'_> {
     fn next(&mut self) -> Result<&Token> {
         let token = match self.0.next() {
             Some(token) => token,
-            None => bail!("Unexpected end of token stream"),
+            None => bail!("Unexpected end of token stream")
         };
 
         Ok(token)
@@ -227,19 +225,18 @@ pub fn parse(token_list: &TokenList) -> Result<Ast> {
     Ok(Ast::Program(declarations))
 }
 
-fn parse_variable_declaration(
-    tokens: &mut TokenStream, name: String, specifier: &Specifier,
-) -> Result<VariableDeclaration> {
+fn parse_variable_declaration(tokens: &mut TokenStream, name: String, specifier: &Specifier)
+                              -> Result<VariableDeclaration> {
     let expression = match tokens.peek()? {
         Token::Assignment => {
             tokens.next()?;
             parse_optional_expression(tokens, Token::Semicolon)?
-        }
+        },
         Token::Semicolon => {
             tokens.next()?;
             None
-        }
-        token => bail!("parse_variable_declaration: unexpected token: '{token:?}'"),
+        },
+        token => bail!("parse_variable_declaration: unexpected token: '{token:?}'")
     };
 
     Ok(VariableDeclaration(name, expression, specifier.type_of.clone(), specifier.storage_class.clone()))
@@ -255,22 +252,22 @@ fn parse_parameter_list(tokens: &mut TokenStream) -> Result<Option<Parameters>> 
                 let specifier = parse_type_and_storage_class(tokens)?;
                 let identifier = match tokens.next()? {
                     Token::Identifier(name) => name.to_string(),
-                    token => bail!("parse_parameter: Unexpected token: '{token:?}'"),
+                    token => bail!("parse_parameter: Unexpected token: '{token:?}'")
                 };
                 params.push(Parameter { name: identifier, type_of: specifier.type_of });
-            }
+            },
             Token::Comma => {
                 tokens.next()?;
                 if *tokens.peek()? == Token::CloseParen {
                     bail!("Unexpected trailing comma in function definition");
                 }
-            }
+            },
             Token::Void => {
                 tokens.next()?;
                 tokens.expect(Token::CloseParen)?;
                 return Ok(None);
-            }
-            token => bail!("parse_parameter_list: unexpected token '{token:?}'"),
+            },
+            token => bail!("parse_parameter_list: unexpected token '{token:?}'")
         }
     }
     tokens.expect(Token::CloseParen)?;
@@ -278,18 +275,17 @@ fn parse_parameter_list(tokens: &mut TokenStream) -> Result<Option<Parameters>> 
     Ok(Some(params))
 }
 
-fn parse_function_declaration(
-    tokens: &mut TokenStream, name: String, specifier: &Specifier,
-) -> Result<FunctionDeclaration> {
+fn parse_function_declaration(tokens: &mut TokenStream, name: String, specifier: &Specifier)
+                              -> Result<FunctionDeclaration> {
     let optional_params = parse_parameter_list(tokens)?;
 
     let optional_body = match tokens.peek()? {
         Token::Semicolon => {
             tokens.next()?;
             None
-        }
+        },
         Token::OpenBrace => Some(parse_block(tokens)?),
-        token => bail!("parse_function_declaration: unexpected token: '{token:?}'"),
+        token => bail!("parse_function_declaration: unexpected token: '{token:?}'")
     };
 
     let param_types = {
@@ -316,11 +312,11 @@ fn parse_constant(token: &Token) -> Result<Expression> {
             } else {
                 Expression::Constant(Const::ConstLong(number), Type::Long)
             }
-        }
+        },
         Token::LConstant(value) => {
             let number: i64 = value.parse()?;
             Expression::Constant(Const::ConstLong(number), Type::Long)
-        }
+        },
         _ => {
             bail!("parse_constant: unexpected token while parsing constant: {token:?}");
         }
@@ -333,7 +329,7 @@ fn parse_type(specifiers: &Vec<Type>) -> Result<Type> {
     let parsed_type = match specifiers[..] {
         [Type::Int] => Type::Int,
         [Type::Long] | [Type::Long, Type::Int] | [Type::Int, Type::Long] => Type::Long,
-        _ => bail!("parse_type: Unrecognized type specifiers: {specifiers:?}"),
+        _ => bail!("parse_type: Unrecognized type specifiers: {specifiers:?}")
     };
 
     Ok(parsed_type)
@@ -349,7 +345,7 @@ fn parse_type_and_storage_class(tokens: &mut TokenStream) -> Result<Specifier> {
             Token::Long => types.push(Type::Long),
             Token::Static => storage_classes.push(StorageClass::Static),
             Token::Extern => storage_classes.push(StorageClass::Extern),
-            _ => break,
+            _ => break
         }
         tokens.next()?;
     }
@@ -362,7 +358,7 @@ fn parse_type_and_storage_class(tokens: &mut TokenStream) -> Result<Specifier> {
 
     let identifier_storage_class = match storage_classes.len() {
         1 => Some(storage_classes[0].clone()),
-        _ => None,
+        _ => None
     };
 
     Ok(Specifier { type_of: identifier_type, storage_class: identifier_storage_class })
@@ -376,13 +372,13 @@ fn parse_declaration(tokens: &mut TokenStream) -> Result<Declaration> {
             let identifier = name.clone();
             tokens.next()?;
             identifier
-        }
-        token => bail!("parse_declaration: Identifier expected: {token:?}"),
+        },
+        token => bail!("parse_declaration: Identifier expected: {token:?}")
     };
 
     let declaration = match tokens.peek()? {
         Token::OpenParen => Declaration::FunDecl(parse_function_declaration(tokens, identifier, &specifier)?),
-        _ => Declaration::VarDecl(parse_variable_declaration(tokens, identifier, &specifier)?),
+        _ => Declaration::VarDecl(parse_variable_declaration(tokens, identifier, &specifier)?)
     };
 
     Ok(declaration)
@@ -391,7 +387,7 @@ fn parse_declaration(tokens: &mut TokenStream) -> Result<Declaration> {
 fn parse_block_item(tokens: &mut TokenStream) -> Result<BlockItem> {
     let block_item = match tokens.peek()? {
         Token::Int | Token::Long | Token::Static | Token::Extern => BlockItem::D(parse_declaration(tokens)?),
-        _ => BlockItem::S(parse_statement(tokens)?),
+        _ => BlockItem::S(parse_statement(tokens)?)
     };
 
     Ok(block_item)
@@ -433,8 +429,8 @@ fn parse_if(tokens: &mut TokenStream) -> Result<Statement> {
         Token::Else => {
             tokens.next()?;
             Some(Box::new(parse_statement(tokens)?))
-        }
-        _ => None,
+        },
+        _ => None
     };
 
     Ok(Statement::If(condition, then_statement, else_statement))
@@ -447,12 +443,12 @@ fn parse_statement(tokens: &mut TokenStream) -> Result<Statement> {
             tokens.expect(Token::Break)?;
             tokens.expect(Token::Semicolon)?;
             Statement::Break(temp_name("break"))
-        }
+        },
         Token::Continue => {
             tokens.expect(Token::Continue)?;
             tokens.expect(Token::Semicolon)?;
             Statement::Continue(temp_name("continue"))
-        }
+        },
         Token::While => {
             tokens.expect(Token::While)?;
             tokens.expect(Token::OpenParen)?;
@@ -460,7 +456,7 @@ fn parse_statement(tokens: &mut TokenStream) -> Result<Statement> {
             tokens.expect(Token::CloseParen)?;
             let statement = parse_statement(tokens)?;
             Statement::While(expression, Box::new(statement), temp_name("while"))
-        }
+        },
         Token::Do => {
             tokens.expect(Token::Do)?;
             let statement = parse_statement(tokens)?;
@@ -470,7 +466,7 @@ fn parse_statement(tokens: &mut TokenStream) -> Result<Statement> {
             tokens.expect(Token::CloseParen)?;
             tokens.expect(Token::Semicolon)?;
             Statement::DoWhile(Box::new(statement), expression, temp_name("dowhile"))
-        }
+        },
         Token::For => {
             tokens.expect(Token::For)?;
             tokens.expect(Token::OpenParen)?;
@@ -479,7 +475,7 @@ fn parse_statement(tokens: &mut TokenStream) -> Result<Statement> {
             let optional_exp2 = parse_optional_expression(tokens, Token::CloseParen)?;
             let statement = parse_statement(tokens)?;
             Statement::For(for_init, optional_exp1, optional_exp2, Box::new(statement), temp_name("for"))
-        }
+        },
         Token::Semicolon => parse_null(tokens)?,
         Token::Return => parse_return(tokens)?,
         Token::If => parse_if(tokens)?,
@@ -515,10 +511,10 @@ fn parse_for_init(tokens: &mut TokenStream) -> Result<ForInit> {
             match declaration {
                 Declaration::FunDecl(_) => {
                     bail!("parse_for_init: Unexpected function declaration: {declaration:?}");
-                }
-                Declaration::VarDecl(variable_declaration) => ForInit::InitDecl(variable_declaration),
+                },
+                Declaration::VarDecl(variable_declaration) => ForInit::InitDecl(variable_declaration)
             }
-        }
+        },
         _ => {
             let init_exp = parse_optional_expression(tokens, Token::Semicolon)?;
             ForInit::InitExp(init_exp)
@@ -572,7 +568,7 @@ fn parse_unary(tokens: &mut TokenStream) -> Result<UnaryOperator> {
         Token::Complement => UnaryOperator::Complement,
         Token::Minus => UnaryOperator::Negate,
         Token::Not => UnaryOperator::Not,
-        _ => bail!("Unexpected token for unary operator {token:?}"),
+        _ => bail!("Unexpected token for unary operator {token:?}")
     };
 
     Ok(operator)
@@ -632,7 +628,7 @@ fn parse_function_call(tokens: &mut TokenStream, name: &String) -> Result<Expres
 
     let arguments = match argument_list.len() {
         0 => None,
-        _ => Some(argument_list),
+        _ => Some(argument_list)
     };
 
     Ok(Expression::FunctionCall(name.to_string(), arguments, Type::None))
@@ -643,19 +639,19 @@ fn parse_factor(tokens: &mut TokenStream) -> Result<Expression> {
         token @ (Token::Constant(_) | Token::LConstant(_)) => {
             tokens.next()?;
             parse_constant(&token)?
-        }
+        },
         Token::Identifier(name) => {
             tokens.next()?;
             match tokens.peek()? {
                 Token::OpenParen => parse_function_call(tokens, &name)?,
-                _ => Expression::Var(name, Type::None),
+                _ => Expression::Var(name, Type::None)
             }
-        }
+        },
         Token::Complement | Token::Minus | Token::Not => {
             let operator = parse_unary(tokens)?;
             let inner_expression = parse_factor(tokens)?;
             Expression::Unary(operator, Box::new(inner_expression), Type::None)
-        }
+        },
         Token::OpenParen => {
             tokens.next()?;
             match tokens.peek()? {
@@ -664,21 +660,21 @@ fn parse_factor(tokens: &mut TokenStream) -> Result<Expression> {
                     tokens.expect(Token::CloseParen)?;
                     let inner_expression = parse_factor(tokens)?;
                     Expression::Cast(Type::Int, Box::new(inner_expression), Type::None)
-                }
+                },
                 Token::Long => {
                     tokens.next()?;
                     tokens.expect(Token::CloseParen)?;
                     let inner_expression = parse_factor(tokens)?;
                     Expression::Cast(Type::Long, Box::new(inner_expression), Type::None)
-                }
+                },
                 _ => {
                     let inner_expression = parse_expression(tokens, 0)?;
                     tokens.expect(Token::CloseParen)?;
                     inner_expression
                 }
             }
-        }
-        token => bail!("parse_expression: Unexpected token: '{token:?}'"),
+        },
+        token => bail!("parse_expression: Unexpected token: '{token:?}'")
     };
 
     Ok(expression)

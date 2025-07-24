@@ -2,15 +2,16 @@
 //!
 //! Generate x86-64 assembly language from the AST created by parser.
 
+use crate::parse;
+use crate::parse::Identifier;
 use crate::tacky;
-use crate::validate::{IdentAttrs, Symbol, SymbolTable};
+use crate::validate::{IdentAttrs, StaticInit, Symbol, SymbolTable};
 
 use anyhow::Result;
 use std::collections::HashMap;
+use std::convert::Into;
 use std::fmt::Write as _;
 
-pub type Identifier = String;
-pub type Instructions = Vec<Instruction>;
 pub type StackSize = i32;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -23,39 +24,35 @@ pub enum Register {
     R8,
     R9,
     R10,
-    R11,
+    R11
 }
 
 const STACK_COUNT: usize = 6; // First 6 arguments go into registers
-static ARG_REGISTERS: [Register; STACK_COUNT] = [
-    Register::DI,
-    Register::SI,
-    Register::DX,
-    Register::CX,
-    Register::R8,
-    Register::R9,
-];
+static ARG_REGISTERS: [Register; STACK_COUNT] =
+    [Register::DI, Register::SI, Register::DX, Register::CX, Register::R8, Register::R9];
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ByteSize {
     B1 = 0, // 1 byte
     B4,     // 4 bytes
-    B8,     // 8 bytes
+    B8      // 8 bytes
 }
 
 const REG_SIZES: usize = 3;
 const REG_COUNT: usize = 9;
+
+#[rustfmt::skip]
 const REGNAME: [[&str; REG_SIZES]; REG_COUNT] = [
     // B1       B4       B8
-    ["%al", "%eax", "%rax"],
-    ["%cl", "%ecx", "%rcx"],
-    ["%dl", "%edx", "%rdx"],
-    ["%dil", "%edi", "%rdi"],
-    ["%sil", "%esi", "%rsi"],
-    ["%r8b", "%r8d", "%r8"],
-    ["%r9b", "%r9d", "%r9"],
+    ["%al",   "%eax",  "%rax"],
+    ["%cl",   "%ecx",  "%rcx"],
+    ["%dl",   "%edx",  "%rdx"],
+    ["%dil",  "%edi",  "%rdi"],
+    ["%sil",  "%esi",  "%rsi"],
+    ["%r8b",  "%r8d",  "%r8" ],
+    ["%r9b",  "%r9d",  "%r9" ],
     ["%r10b", "%r10d", "%r10"],
-    ["%r11b", "%r11d", "%r11"],
+    ["%r11b", "%r11d", "%r11"]
 ];
 
 #[derive(Debug, Clone, PartialEq)]
@@ -64,7 +61,7 @@ pub enum Operand {
     Reg(Register),
     Pseudo(Identifier),
     Stack(i32),
-    Data(Identifier),
+    Data(Identifier)
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -76,13 +73,13 @@ pub enum BinaryOperator {
     Rightshift,
     BitAnd,
     BitXor,
-    BitOr,
+    BitOr
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum UnaryOperator {
     Neg,
-    Not,
+    Not
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -92,17 +89,45 @@ pub enum ConditionCode {
     G,
     GE,
     L,
-    LE,
+    LE
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum AssemblyType {
+    Longword,
+    Quadword
+}
+
+type Alignment = usize;
+
+impl AssemblyType {
+    fn alignment(&self) -> Alignment {
+        match self {
+            AssemblyType::Longword => 4,
+            AssemblyType::Quadword => 8
+        }
+    }
+}
+
+impl Into<AssemblyType> for parse::Type {
+    fn into(self) -> AssemblyType {
+        match self {
+            parse::Type::Int => AssemblyType::Longword,
+            parse::Type::Long => AssemblyType::Quadword,
+            _ => todo!()
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Instruction {
-    Mov(Operand, Operand),
-    Unary(UnaryOperator, Operand),
-    Binary(BinaryOperator, Operand, Operand),
-    Cmp(Operand, Operand),
-    Idiv(Operand),
-    Cdq,
+    Mov(AssemblyType, Operand, Operand),
+    Movsx(Operand, Operand),
+    Unary(UnaryOperator, AssemblyType, Operand),
+    Binary(BinaryOperator, AssemblyType, Operand, Operand),
+    Cmp(AssemblyType, Operand, Operand),
+    Idiv(AssemblyType, Operand),
+    Cdq(AssemblyType),
     Jmp(Identifier),
     JmpCC(ConditionCode, Identifier),
     SetCC(ConditionCode, Operand),
@@ -111,19 +136,21 @@ pub enum Instruction {
     DeallocateStack(i32),
     Push(Operand),
     Call(Identifier),
-    Ret,
+    Ret
 }
+
+pub type Instructions = Vec<Instruction>;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Function(Identifier, bool, StackSize, Option<Instructions>);
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct StaticVariable(Identifier, bool, i32);
+pub struct StaticVariable(Identifier, bool, Alignment, StaticInit);
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Definition {
     FunDef(Function),
-    VarDef(StaticVariable),
+    VarDef(StaticVariable)
 }
 
 type TopLevel = Vec<Definition>;
@@ -131,43 +158,45 @@ type Definitions = Vec<Definition>;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Assembly {
-    Program(TopLevel),
+    Program(TopLevel)
 }
 
 #[rustfmt::skip]
-impl tacky::UnaryOperator {
-    fn convert(&self) -> UnaryOperator {
+impl Into<UnaryOperator> for parse::UnaryOperator {
+    fn into(self) -> UnaryOperator {
         match self {
-            tacky::UnaryOperator::Complement => UnaryOperator::Not,
-            tacky::UnaryOperator::Negate     => UnaryOperator::Neg,
-            tacky::UnaryOperator::Not        => UnaryOperator::Not,
+            parse::UnaryOperator::Complement => UnaryOperator::Not,
+            parse::UnaryOperator::Negate     => UnaryOperator::Neg,
+            parse::UnaryOperator::Not        => UnaryOperator::Not,
         }
     }
 }
 
 #[rustfmt::skip]
-impl tacky::BinaryOperator {
-    fn convert(&self) -> BinaryOperator {
+impl Into<BinaryOperator> for parse::BinaryOperator {
+    fn into(self) -> BinaryOperator {
         match self {
-            tacky::BinaryOperator::Add        => BinaryOperator::Add,
-            tacky::BinaryOperator::Subtract   => BinaryOperator::Sub,
-            tacky::BinaryOperator::Multiply   => BinaryOperator::Mult,
-            tacky::BinaryOperator::Rightshift => BinaryOperator::Rightshift,
-            tacky::BinaryOperator::Leftshift  => BinaryOperator::Leftshift,
-            tacky::BinaryOperator::BitAnd     => BinaryOperator::BitAnd,
-            tacky::BinaryOperator::BitXor     => BinaryOperator::BitXor,
-            tacky::BinaryOperator::BitOr      => BinaryOperator::BitOr,
+            parse::BinaryOperator::Plus       => BinaryOperator::Add,
+            parse::BinaryOperator::Minus      => BinaryOperator::Sub,
+            parse::BinaryOperator::Multiply   => BinaryOperator::Mult,
+            parse::BinaryOperator::Rightshift => BinaryOperator::Rightshift,
+            parse::BinaryOperator::Leftshift  => BinaryOperator::Leftshift,
+            parse::BinaryOperator::BitAnd     => BinaryOperator::BitAnd,
+            parse::BinaryOperator::BitXor     => BinaryOperator::BitXor,
+            parse::BinaryOperator::BitOr      => BinaryOperator::BitOr,
             _ => todo!(),
         }
     }
 }
 
-#[rustfmt::skip]
-impl tacky::Val {
-    fn convert(&self) -> Operand {
+impl Into<Operand> for tacky::Val {
+    fn into(self) -> Operand {
         match self {
-            tacky::Val::Constant(number) => Operand::Imm(*number),
-            tacky::Val::Var(identifier)  => Operand::Pseudo(identifier.to_string()),
+            tacky::Val::Constant(number) => match number {
+                parse::Const::ConstInt(number) => Operand::Imm(number),
+                parse::Const::ConstLong(_number) => todo!()
+            },
+            tacky::Val::Var(identifier) => Operand::Pseudo(identifier)
         }
     }
 }
@@ -178,15 +207,20 @@ pub fn generate(ast: &tacky::Tacky, symbol_table: &SymbolTable) -> Assembly {
 
     for declaration in declarations {
         match declaration {
-            tacky::Declaration::FunDecl(function_declaration) => {
+            tacky::Definition::FunDef(function_declaration) => {
                 let mut function = gen_assembly(function_declaration);
                 function = fixup_pseudo(function, symbol_table);
                 function = fixup_invalid(function);
                 function = allocate_stack(function);
                 definitions.push(Definition::FunDef(function));
-            }
-            tacky::Declaration::VarDecl(tacky::StaticVariable(name, global, init)) => {
-                definitions.push(Definition::VarDef(StaticVariable(name.to_string(), *global, *init)));
+            },
+            tacky::Definition::VarDef(tacky::StaticVariable(name, global, var_type, init)) => {
+                let asm_type: AssemblyType = (var_type.clone()).into();
+                let alignment = asm_type.alignment();
+                definitions.push(Definition::VarDef(StaticVariable(name.to_string(),
+                                                                   *global,
+                                                                   alignment,
+                                                                   init.clone())));
             }
         }
     }
@@ -194,7 +228,8 @@ pub fn generate(ast: &tacky::Tacky, symbol_table: &SymbolTable) -> Assembly {
     Assembly::Program(definitions)
 }
 
-fn convert_function_call(name: &String, arguments: &Option<tacky::Args>, dst: &tacky::Val, instructions: &mut Instructions) {
+fn convert_function_call(name: &String, arguments: &Option<tacky::Arguments>, dst: &tacky::Val,
+                         instructions: &mut Instructions) {
     let mut stack_padding: i32 = 0; // in bytes
 
     if let Some(args) = arguments {
@@ -209,16 +244,16 @@ fn convert_function_call(name: &String, arguments: &Option<tacky::Args>, dst: &t
 
         for (index, tacky_arg) in register_args.iter().enumerate() {
             let register = ARG_REGISTERS[index];
-            let assembly_arg = tacky_arg.convert();
+            let assembly_arg = tacky_arg.into();
             instructions.push(Instruction::Mov(assembly_arg, Operand::Reg(register)));
         }
 
         for tacky_arg in stack_args.iter().rev() {
-            let assembly_arg = tacky_arg.convert();
+            let assembly_arg = tacky_arg.into();
             match assembly_arg {
                 Operand::Imm(_) | Operand::Reg(_) => {
                     instructions.push(Instruction::Push(assembly_arg));
-                }
+                },
                 _ => {
                     instructions.push(Instruction::Mov(assembly_arg, Operand::Reg(Register::AX)));
                     instructions.push(Instruction::Push(Operand::Reg(Register::AX)));
@@ -235,7 +270,7 @@ fn convert_function_call(name: &String, arguments: &Option<tacky::Args>, dst: &t
         instructions.push(Instruction::Call(name.to_string()));
     }
 
-    instructions.push(Instruction::Mov(Operand::Reg(Register::AX), dst.convert()));
+    instructions.push(Instruction::Mov(Operand::Reg(Register::AX), dst.into()));
 }
 
 fn tacky_to_assembly(instruction: &tacky::Instruction) -> Instructions {
@@ -244,80 +279,80 @@ fn tacky_to_assembly(instruction: &tacky::Instruction) -> Instructions {
     match instruction {
         tacky::Instruction::FunCall(name, args, dst) => {
             convert_function_call(name, args, dst, &mut instructions);
-        }
+        },
         tacky::Instruction::Return(val) => {
-            instructions.push(Instruction::Mov(val.convert(), Operand::Reg(Register::AX)));
+            instructions.push(Instruction::Mov(val.into(), Operand::Reg(Register::AX)));
             instructions.push(Instruction::Ret);
-        }
+        },
         tacky::Instruction::Unary(tacky::UnaryOperator::Not, src, dst) => {
-            instructions.push(Instruction::Cmp(Operand::Imm(0), src.convert()));
-            instructions.push(Instruction::Mov(Operand::Imm(0), dst.convert()));
-            instructions.push(Instruction::SetCC(ConditionCode::E, dst.convert()));
-        }
+            instructions.push(Instruction::Cmp(Operand::Imm(0), src.into()));
+            instructions.push(Instruction::Mov(Operand::Imm(0), dst.into()));
+            instructions.push(Instruction::SetCC(ConditionCode::E, dst.into()));
+        },
         tacky::Instruction::Unary(operator, src, dst) => {
-            instructions.push(Instruction::Mov(src.convert(), dst.convert()));
-            instructions.push(Instruction::Unary(operator.convert(), dst.convert()));
-        }
+            instructions.push(Instruction::Mov(src.into(), dst.into()));
+            instructions.push(Instruction::Unary(operator.into(), dst.into()));
+        },
         tacky::Instruction::Binary(tacky::BinaryOperator::Divide, src1, src2, dst) => {
-            instructions.push(Instruction::Mov(src1.convert(), Operand::Reg(Register::AX)));
+            instructions.push(Instruction::Mov(src1.into(), Operand::Reg(Register::AX)));
             instructions.push(Instruction::Cdq);
-            instructions.push(Instruction::Idiv(src2.convert()));
-            instructions.push(Instruction::Mov(Operand::Reg(Register::AX), dst.convert()));
-        }
+            instructions.push(Instruction::Idiv(src2.into()));
+            instructions.push(Instruction::Mov(Operand::Reg(Register::AX), dst.into()));
+        },
         tacky::Instruction::Binary(tacky::BinaryOperator::Remainder, src1, src2, dst) => {
-            instructions.push(Instruction::Mov(src1.convert(), Operand::Reg(Register::AX)));
+            instructions.push(Instruction::Mov(src1.into(), Operand::Reg(Register::AX)));
             instructions.push(Instruction::Cdq);
-            instructions.push(Instruction::Idiv(src2.convert()));
-            instructions.push(Instruction::Mov(Operand::Reg(Register::DX), dst.convert()));
-        }
+            instructions.push(Instruction::Idiv(src2.into()));
+            instructions.push(Instruction::Mov(Operand::Reg(Register::DX), dst.into()));
+        },
         tacky::Instruction::Binary(tacky::BinaryOperator::Equal, src1, src2, dst) => {
-            instructions.push(Instruction::Cmp(src2.convert(), src1.convert()));
-            instructions.push(Instruction::Mov(Operand::Imm(0), dst.convert()));
-            instructions.push(Instruction::SetCC(ConditionCode::E, dst.convert()));
-        }
+            instructions.push(Instruction::Cmp(src2.into(), src1.into()));
+            instructions.push(Instruction::Mov(Operand::Imm(0), dst.into()));
+            instructions.push(Instruction::SetCC(ConditionCode::E, dst.into()));
+        },
         tacky::Instruction::Binary(tacky::BinaryOperator::NotEqual, src1, src2, dst) => {
-            instructions.push(Instruction::Cmp(src2.convert(), src1.convert()));
-            instructions.push(Instruction::Mov(Operand::Imm(0), dst.convert()));
-            instructions.push(Instruction::SetCC(ConditionCode::NE, dst.convert()));
-        }
+            instructions.push(Instruction::Cmp(src2.into(), src1.into()));
+            instructions.push(Instruction::Mov(Operand::Imm(0), dst.into()));
+            instructions.push(Instruction::SetCC(ConditionCode::NE, dst.into()));
+        },
         tacky::Instruction::Binary(tacky::BinaryOperator::LessThan, src1, src2, dst) => {
-            instructions.push(Instruction::Cmp(src2.convert(), src1.convert()));
-            instructions.push(Instruction::Mov(Operand::Imm(0), dst.convert()));
-            instructions.push(Instruction::SetCC(ConditionCode::L, dst.convert()));
-        }
+            instructions.push(Instruction::Cmp(src2.into(), src1.into()));
+            instructions.push(Instruction::Mov(Operand::Imm(0), dst.into()));
+            instructions.push(Instruction::SetCC(ConditionCode::L, dst.into()));
+        },
         tacky::Instruction::Binary(tacky::BinaryOperator::LessOrEqual, src1, src2, dst) => {
-            instructions.push(Instruction::Cmp(src2.convert(), src1.convert()));
-            instructions.push(Instruction::Mov(Operand::Imm(0), dst.convert()));
-            instructions.push(Instruction::SetCC(ConditionCode::LE, dst.convert()));
-        }
+            instructions.push(Instruction::Cmp(src2.into(), src1.into()));
+            instructions.push(Instruction::Mov(Operand::Imm(0), dst.into()));
+            instructions.push(Instruction::SetCC(ConditionCode::LE, dst.into()));
+        },
         tacky::Instruction::Binary(tacky::BinaryOperator::GreaterThan, src1, src2, dst) => {
-            instructions.push(Instruction::Cmp(src2.convert(), src1.convert()));
-            instructions.push(Instruction::Mov(Operand::Imm(0), dst.convert()));
-            instructions.push(Instruction::SetCC(ConditionCode::G, dst.convert()));
-        }
+            instructions.push(Instruction::Cmp(src2.into(), src1.into()));
+            instructions.push(Instruction::Mov(Operand::Imm(0), dst.into()));
+            instructions.push(Instruction::SetCC(ConditionCode::G, dst.into()));
+        },
         tacky::Instruction::Binary(tacky::BinaryOperator::GreaterOrEqual, src1, src2, dst) => {
-            instructions.push(Instruction::Cmp(src2.convert(), src1.convert()));
-            instructions.push(Instruction::Mov(Operand::Imm(0), dst.convert()));
-            instructions.push(Instruction::SetCC(ConditionCode::GE, dst.convert()));
-        }
+            instructions.push(Instruction::Cmp(src2.into(), src1.into()));
+            instructions.push(Instruction::Mov(Operand::Imm(0), dst.into()));
+            instructions.push(Instruction::SetCC(ConditionCode::GE, dst.into()));
+        },
         tacky::Instruction::Binary(operator, src1, src2, dst) => {
-            instructions.push(Instruction::Mov(src1.convert(), dst.convert()));
-            instructions.push(Instruction::Binary(operator.convert(), src2.convert(), dst.convert()));
-        }
+            instructions.push(Instruction::Mov(src1.into(), dst.into()));
+            instructions.push(Instruction::Binary(operator.into(), src2.into(), dst.into()));
+        },
         tacky::Instruction::Jump(target) => {
             instructions.push(Instruction::Jmp(target.to_string()));
-        }
+        },
         tacky::Instruction::JumpIfZero(val, target) => {
-            instructions.push(Instruction::Cmp(Operand::Imm(0), val.convert()));
+            instructions.push(Instruction::Cmp(Operand::Imm(0), val.into()));
             instructions.push(Instruction::JmpCC(ConditionCode::E, target.to_string()));
-        }
+        },
         tacky::Instruction::JumpIfNotZero(val, target) => {
-            instructions.push(Instruction::Cmp(Operand::Imm(0), val.convert()));
+            instructions.push(Instruction::Cmp(Operand::Imm(0), val.into()));
             instructions.push(Instruction::JmpCC(ConditionCode::NE, target.to_string()));
-        }
+        },
         tacky::Instruction::Copy(src, dst) => {
-            instructions.push(Instruction::Mov(src.convert(), dst.convert()));
-        }
+            instructions.push(Instruction::Mov(src.into(), dst.into()));
+        },
         tacky::Instruction::Label(target) => {
             instructions.push(Instruction::Label(target.to_string()));
         }
@@ -329,35 +364,31 @@ fn tacky_to_assembly(instruction: &tacky::Instruction) -> Instructions {
 fn gen_assembly(function: &tacky::Function) -> Function {
     let tacky::Function(name, global, parameters, body) = function;
     let instructions = body.as_ref().map(|instructions: &tacky::Instructions| -> Instructions {
-        let mut assembly: Instructions = Vec::new();
+                                        let mut assembly: Instructions = Vec::new();
 
-        if let Some(params) = parameters {
-            let mut ix = 0;
-            while ix < params.len() && ix < STACK_COUNT {
-                assembly.push(Instruction::Mov(
-                    Operand::Reg(ARG_REGISTERS[ix]),
-                    Operand::Pseudo(params[ix].to_string()),
-                ));
-                ix += 1;
-            }
+                                        if let Some(params) = parameters {
+                                            let mut ix = 0;
+                                            while ix < params.len() && ix < STACK_COUNT {
+                                                assembly.push(Instruction::Mov(Operand::Reg(ARG_REGISTERS[ix]),
+                                                                Operand::Pseudo(params[ix].to_string())));
+                                                ix += 1;
+                                            }
 
-            let mut stack_depth = 16;
-            while ix < params.len() {
-                assembly.push(Instruction::Mov(
-                    Operand::Stack(stack_depth),
-                    Operand::Pseudo(params[ix].to_string()),
-                ));
-                ix += 1;
-                stack_depth += 8;
-            }
-        }
+                                            let mut stack_depth = 16;
+                                            while ix < params.len() {
+                                                assembly.push(Instruction::Mov(Operand::Stack(stack_depth),
+                                                                Operand::Pseudo(params[ix].to_string())));
+                                                ix += 1;
+                                                stack_depth += 8;
+                                            }
+                                        }
 
-        instructions
-            .iter()
-            .for_each(|instruction| assembly.append(&mut tacky_to_assembly(instruction)));
+                                        instructions.iter().for_each(|instruction| {
+                                                               assembly.append(&mut tacky_to_assembly(instruction))
+                                                           });
 
-        assembly
-    });
+                                        assembly
+                                    });
 
     Function(name.clone(), *global, 0, instructions)
 }
@@ -367,8 +398,8 @@ fn allocate_stack(function: Function) -> Function {
         Function(name, global, stack_size, Some(mut instructions)) if stack_size > 0 => {
             instructions.insert(0, Instruction::AllocateStack(stack_size));
             Function(name, global, stack_size, Some(instructions))
-        }
-        _ => function,
+        },
+        _ => function
     }
 }
 
@@ -382,10 +413,7 @@ fn fixup_pseudo(function: Function, symbol_table: &SymbolTable) -> Function {
         const TMPSIZE: i32 = 4;
         if let Operand::Pseudo(identifier) = operand {
             match symbol_table.get(identifier) {
-                Some(Symbol {
-                    attrs: IdentAttrs::Static(_, _),
-                    ..
-                }) => Operand::Data(identifier.to_string()),
+                Some(Symbol { attrs: IdentAttrs::Static(_, _), .. }) => Operand::Data(identifier.to_string()),
                 _ => match pseudo_map.get(identifier) {
                     Some(offset) => Operand::Stack(*offset),
                     None => {
@@ -393,31 +421,43 @@ fn fixup_pseudo(function: Function, symbol_table: &SymbolTable) -> Function {
                         pseudo_map.insert(identifier.to_string(), *depth);
                         Operand::Stack(*depth)
                     }
-                },
+                }
             }
         } else {
             operand.clone()
         }
     };
 
-    let instructions = body.as_ref().map(|block: &Instructions| -> Instructions {
-        let mut assembly = Instructions::new();
+    let instructions =
+        body.as_ref().map(|block: &Instructions| -> Instructions {
+                         let mut assembly = Instructions::new();
 
-        #[rustfmt::skip]
-        block.iter().for_each(|instruction: &Instruction|
-            assembly.push(match instruction {
-                Instruction::Mov(src, dst)        => Instruction::Mov(fixup(src), fixup(dst)),
-                Instruction::Unary(op, dst)       => Instruction::Unary(op.clone(), fixup(dst)),
-                Instruction::Binary(op, src, dst) => Instruction::Binary(op.clone(), fixup(src), fixup(dst)),
-                Instruction::Idiv(src)            => Instruction::Idiv(fixup(src)),
-                Instruction::Cmp(src1, src2)      => Instruction::Cmp(fixup(src1), fixup(src2)),
-                Instruction::SetCC(op, dst)       => Instruction::SetCC(op.clone(), fixup(dst)),
-                Instruction::Push(src)            => Instruction::Push(fixup(src)),
-                _                                 => instruction.clone(),
-            })
-        );
-        assembly
-    });
+                         block.iter().for_each(|instruction: &Instruction| {
+                                         assembly.push(match instruction {
+                                                     Instruction::Mov(atype, src, dst) => {
+                                                         Instruction::Mov(atype, fixup(src), fixup(dst))
+                                                     },
+                                                     Instruction::Unary(op, atype, dst) => {
+                                                         Instruction::Unary(op.clone(), atype, fixup(dst))
+                                                     },
+                                                     Instruction::Binary(op, atype, src, dst) => {
+                                                         Instruction::Binary(op.clone(), atype, fixup(src), fixup(dst))
+                                                     },
+                                                     Instruction::Idiv(atype, src) => {
+                                                         Instruction::Idiv(atype, fixup(src))
+                                                     },
+                                                     Instruction::Cmp(atype, src1, src2) => {
+                                                         Instruction::Cmp(atype, fixup(src1), fixup(src2))
+                                                     },
+                                                     Instruction::SetCC(op, dst) => {
+                                                         Instruction::SetCC(op.clone(), fixup(dst))
+                                                     },
+                                                     Instruction::Push(src) => Instruction::Push(fixup(src)),
+                                                     _ => instruction.clone()
+                                                 })
+                                     });
+                         assembly
+                     });
     let mut stack_size = 0;
     if stack_depth < 0 {
         stack_size = (stack_depth.abs() / 16) * 16 + 16
@@ -429,71 +469,67 @@ fn fixup_pseudo(function: Function, symbol_table: &SymbolTable) -> Function {
 fn fixup_invalid(function: Function) -> Function {
     let Function(name, global, stack_size, body) = function;
 
-    let instructions = body.as_ref().map(|block| -> Instructions {
-        macro_rules! invalid {
-            ($src:expr, $dst:expr) => {
-                matches!($src, Operand::Stack(_) | Operand::Data(_)) && matches!($dst, Operand::Stack(_) | Operand::Data(_))
-            };
-        }
-        let mut instructions = Instructions::new();
+    let instructions =
+        body.as_ref().map(|block| -> Instructions {
+                         macro_rules! invalid {
+                             ($src:expr, $dst:expr) => {
+                                 matches!($src, Operand::Stack(_) | Operand::Data(_))
+                                 && matches!($dst, Operand::Stack(_) | Operand::Data(_))
+                             };
+                         }
+                         let mut instructions = Instructions::new();
 
-        for instruction in block {
-            match instruction {
-                Instruction::Cmp(src, Operand::Imm(number)) => {
-                    instructions.push(Instruction::Mov(Operand::Imm(*number), Operand::Reg(Register::R11)));
-                    instructions.push(Instruction::Cmp(src.clone(), Operand::Reg(Register::R11)));
-                }
-                Instruction::Cmp(src, dst) if invalid!(src, dst) => {
-                    instructions.push(Instruction::Mov(dst.clone(), Operand::Reg(Register::R11)));
-                    instructions.push(Instruction::Cmp(src.clone(), Operand::Reg(Register::R11)));
-                }
-                Instruction::Mov(src, dst) if invalid!(src, dst) => {
-                    instructions.push(Instruction::Mov(src.clone(), Operand::Reg(Register::R10)));
-                    instructions.push(Instruction::Mov(Operand::Reg(Register::R10), dst.clone()));
-                }
-                Instruction::Idiv(Operand::Imm(number)) => {
-                    instructions.push(Instruction::Mov(Operand::Imm(*number), Operand::Reg(Register::R10)));
-                    instructions.push(Instruction::Idiv(Operand::Reg(Register::R10)));
-                }
-                Instruction::Binary(BinaryOperator::Mult, src, dst) => {
-                    instructions.push(Instruction::Mov(dst.clone(), Operand::Reg(Register::R11)));
-                    instructions.push(Instruction::Binary(
-                        BinaryOperator::Mult,
-                        src.clone(),
-                        Operand::Reg(Register::R11),
-                    ));
-                    instructions.push(Instruction::Mov(Operand::Reg(Register::R11), dst.clone()));
-                }
-                Instruction::Binary(BinaryOperator::Leftshift, src, dst) if invalid!(src, dst) => {
-                    instructions.push(Instruction::Mov(src.clone(), Operand::Reg(Register::CX)));
-                    instructions.push(Instruction::Binary(
-                        BinaryOperator::Leftshift,
-                        Operand::Reg(Register::CX),
-                        dst.clone(),
-                    ));
-                }
-                Instruction::Binary(BinaryOperator::Rightshift, src, dst) if invalid!(src, dst) => {
-                    instructions.push(Instruction::Mov(src.clone(), Operand::Reg(Register::CX)));
-                    instructions.push(Instruction::Binary(
-                        BinaryOperator::Rightshift,
-                        Operand::Reg(Register::CX),
-                        dst.clone(),
-                    ));
-                }
-                Instruction::Binary(operator, src, dst) if invalid!(src, dst) => {
-                    instructions.push(Instruction::Mov(src.clone(), Operand::Reg(Register::R10)));
-                    instructions.push(Instruction::Binary(
-                        operator.clone(),
-                        Operand::Reg(Register::R10),
-                        dst.clone(),
-                    ));
-                }
-                _ => instructions.push(instruction.clone()),
-            }
-        }
+                         for instruction in block {
+                             match instruction {
+                                 Instruction::Cmp(src, Operand::Imm(number)) => {
+                                     instructions.push(Instruction::Mov(Operand::Imm(*number),
+                                                                        Operand::Reg(Register::R11)));
+                                     instructions.push(Instruction::Cmp(src.clone(), Operand::Reg(Register::R11)));
+                                 },
+                                 Instruction::Cmp(src, dst) if invalid!(src, dst) => {
+                                     instructions.push(Instruction::Mov(dst.clone(), Operand::Reg(Register::R11)));
+                                     instructions.push(Instruction::Cmp(src.clone(), Operand::Reg(Register::R11)));
+                                 },
+                                 Instruction::Mov(src, dst) if invalid!(src, dst) => {
+                                     instructions.push(Instruction::Mov(src.clone(), Operand::Reg(Register::R10)));
+                                     instructions.push(Instruction::Mov(Operand::Reg(Register::R10), dst.clone()));
+                                 },
+                                 Instruction::Idiv(Operand::Imm(number)) => {
+                                     instructions.push(Instruction::Mov(Operand::Imm(*number),
+                                                                        Operand::Reg(Register::R10)));
+                                     instructions.push(Instruction::Idiv(Operand::Reg(Register::R10)));
+                                 },
+                                 Instruction::Binary(BinaryOperator::Mult, src, dst) => {
+                                     instructions.push(Instruction::Mov(dst.clone(), Operand::Reg(Register::R11)));
+                                     instructions.push(Instruction::Binary(BinaryOperator::Mult,
+                                                                           src.clone(),
+                                                                           Operand::Reg(Register::R11)));
+                                     instructions.push(Instruction::Mov(Operand::Reg(Register::R11), dst.clone()));
+                                 },
+                                 Instruction::Binary(BinaryOperator::Leftshift, src, dst) if invalid!(src, dst) => {
+                                     instructions.push(Instruction::Mov(src.clone(), Operand::Reg(Register::CX)));
+                                     instructions.push(Instruction::Binary(BinaryOperator::Leftshift,
+                                                                           Operand::Reg(Register::CX),
+                                                                           dst.clone()));
+                                 },
+                                 Instruction::Binary(BinaryOperator::Rightshift, src, dst) if invalid!(src, dst) => {
+                                     instructions.push(Instruction::Mov(src.clone(), Operand::Reg(Register::CX)));
+                                     instructions.push(Instruction::Binary(BinaryOperator::Rightshift,
+                                                                           Operand::Reg(Register::CX),
+                                                                           dst.clone()));
+                                 },
+                                 Instruction::Binary(operator, src, dst) if invalid!(src, dst) => {
+                                     instructions.push(Instruction::Mov(src.clone(), Operand::Reg(Register::R10)));
+                                     instructions.push(Instruction::Binary(operator.clone(),
+                                                                           Operand::Reg(Register::R10),
+                                                                           dst.clone()));
+                                 },
+                                 _ => instructions.push(instruction.clone())
+                             }
+                         }
 
-        instructions
-    });
+                         instructions
+                     });
 
     Function(name.clone(), global, stack_size, instructions)
 }
@@ -502,8 +538,8 @@ pub fn emit(assembly: &Assembly) -> Result<String> {
     let mut code = String::new();
 
     writeln!(
-        &mut code,
-        r#"    .section __TEXT,__text,regular,pure_instructions
+             &mut code,
+             r#"    .section __TEXT,__text,regular,pure_instructions
     .build_version macos, 12, 0  sdk_version 12, 2
     "#
     )?;
@@ -512,7 +548,7 @@ pub fn emit(assembly: &Assembly) -> Result<String> {
     for definition in definitions {
         match definition {
             Definition::FunDef(function) => emit_function(&mut code, function)?,
-            Definition::VarDef(variable) => emit_static_variable(&mut code, variable)?,
+            Definition::VarDef(variable) => emit_static_variable(&mut code, variable)?
         }
     }
 
@@ -562,7 +598,7 @@ impl UnaryOperator {
     fn name(&self) -> &str {
         match self {
             UnaryOperator::Neg => "negl",
-            UnaryOperator::Not => "notl",
+            UnaryOperator::Not => "notl"
         }
     }
 }
@@ -642,8 +678,8 @@ fn emit_function(code: &mut String, function: &Function) -> Result<()> {
         }
 
         writeln!(
-            code,
-            r#"    .text
+                 code,
+                 r#"    .text
 _{name}:
     pushq   %rbp
     movq    %rsp, %rbp"#

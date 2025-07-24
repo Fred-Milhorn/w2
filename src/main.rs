@@ -27,7 +27,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::process;
 
-// mod code;
+mod code;
 mod convert;
 mod lex;
 mod parse;
@@ -103,7 +103,7 @@ fn main() -> Result<()> {
 
 fn run(opts: &Opts, file: &PathBuf) -> Result<()> {
     if let Some(extension) = file.extension()
-        && extension != "c"
+       && extension != "c"
     {
         bail!("Expected C source file: {file:?}");
     }
@@ -127,7 +127,7 @@ fn run(opts: &Opts, file: &PathBuf) -> Result<()> {
         process::exit(0);
     }
 
-    let (validated_ast, symbol_table) = validate::validate(ast)?;
+    let (validated_ast, mut symbol_table) = validate::validate(ast)?;
     if opts.debug {
         println!("validate: {validated_ast:?}\n");
     }
@@ -135,7 +135,7 @@ fn run(opts: &Opts, file: &PathBuf) -> Result<()> {
         process::exit(0);
     }
 
-    let tacky = tacky::generate(&validated_ast, &symbol_table)?;
+    let tacky = tacky::generate(&validated_ast, &mut symbol_table)?;
     if opts.debug {
         println!("tacky: {tacky:?}\n");
     }
@@ -143,13 +143,13 @@ fn run(opts: &Opts, file: &PathBuf) -> Result<()> {
         process::exit(0);
     }
 
-    // let code = code::generate(&tacky, &symbol_table);
-    // if opts.debug {
-    //     println!("code: {:?}\n", code);
-    // }
-    // if opts.codegen {
-    //     process::exit(0);
-    // }
+    let code = code::generate(&tacky, &symbol_table);
+    if opts.debug {
+        println!("code: {:?}\n", code);
+    }
+    if opts.codegen {
+        process::exit(0);
+    }
 
     // let assembly = code::emit(&code)?;
     // if opts.debug {
