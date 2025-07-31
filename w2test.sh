@@ -1,7 +1,5 @@
 #!/bin/bash -x
 
-exec &> build.log
-
 W2ROOT="$(pwd)"
 chapter=${CHAPTER:?"Chapter is required"}
 if [ -z "$STAGE" ]; then

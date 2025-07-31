@@ -1,9 +1,9 @@
 unstable_features = true
-max_width = 120
+max_width = 100
 edition = "2024"
 use_small_heuristics = "Max"
 fn_params_layout = "Compressed"
-indent_style = "Visual"
+indent_style = "Block"
 match_block_trailing_comma = true
 overflow_delimited_expr = true
 trailing_comma = "Never"

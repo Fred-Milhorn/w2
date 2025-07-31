@@ -2,8 +2,11 @@
 //!
 //! Type conversion functions.
 
+use crate::code::AssemblyType;
 use crate::parse::{Const, Expression, Type};
-use crate::validate::{InitialValue, StaticInit};
+use crate::tacky::Val;
+use crate::validate::{InitialValue, StaticInit, SymbolTable};
+
 use anyhow::{Result, bail};
 
 pub fn get_common_type(type1: Type, type2: Type) -> Type {
@@ -13,6 +16,13 @@ pub fn get_common_type(type1: Type, type2: Type) -> Type {
     Type::Long
 }
 
+pub fn get_common_assembly_type(type1: &AssemblyType, type2: &AssemblyType) -> AssemblyType {
+    if type1 == type2 {
+        return type1.clone();
+    }
+    AssemblyType::Quadword
+}
+
 pub fn convert_to(expression: Expression, exp_type: Type) -> Expression {
     if expression.get_type() == exp_type {
         return expression;
@@ -20,7 +30,9 @@ pub fn convert_to(expression: Expression, exp_type: Type) -> Expression {
     Expression::Cast(exp_type.clone(), Box::new(expression), exp_type.clone())
 }
 
-pub fn convert_static_init(name: &str, var_type: &Type, init: &Option<Expression>) -> Result<InitialValue> {
+pub fn convert_static_init(
+    name: &str, var_type: &Type, init: &Option<Expression>,
+) -> Result<InitialValue> {
     let initial_value = match init {
         Some(Expression::Constant(numeric, _)) => match numeric {
             Const::ConstInt(number) => InitialValue::Initial(StaticInit::IntInit(*number)),
@@ -28,21 +40,40 @@ pub fn convert_static_init(name: &str, var_type: &Type, init: &Option<Expression
                 Type::Int => InitialValue::Initial(StaticInit::IntInit(*number as i32)),
                 Type::Long => InitialValue::Initial(StaticInit::LongInit(*number)),
                 _ => {
-                    bail!("convert_static_init: unexpected type {var_type:?} for variable {name:?}");
-                }
-            }
+                    bail!(
+                        "convert_static_init: unexpected type {var_type:?} for variable {name:?}"
+                    );
+                },
+            },
         },
         None => match var_type {
             Type::Int => InitialValue::Initial(StaticInit::IntInit(0)),
             Type::Long => InitialValue::Initial(StaticInit::LongInit(0)),
             _ => {
                 bail!("convert_static_init: unexpected type {var_type:?} for variable {name:?}");
-            }
+            },
         },
         _ => {
-            bail!("typecheck_local_variable: Non-constant initializer on local static variable: {name:?}");
-        }
+            bail!(
+                "typecheck_local_variable: Non-constant initializer on local static variable: {name:?}"
+            );
+        },
     };
 
     Ok(initial_value)
+}
+
+pub fn val_type(value: &Val, symbol_table: &SymbolTable) -> AssemblyType {
+    match value {
+        Val::Constant(Const::ConstInt(_)) => AssemblyType::Longword,
+        Val::Constant(Const::ConstLong(_)) => AssemblyType::Quadword,
+        Val::Var(identifier) => match symbol_table.get(identifier) {
+            Some(entry) => match entry.symbol_type {
+                Type::Int => AssemblyType::Longword,
+                Type::Long => AssemblyType::Quadword,
+                _ => todo!(),
+            },
+            None => todo!(),
+        },
+    }
 }

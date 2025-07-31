@@ -157,14 +157,21 @@ pub struct Parameter {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct VariableDeclaration(pub Identifier, pub Option<Expression>, pub Type, pub Option<StorageClass>);
+pub struct VariableDeclaration(
+    pub Identifier,
+    pub Option<Expression>,
+    pub Type,
+    pub Option<StorageClass>
+);
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct FunctionDeclaration(pub Identifier,
-                               pub Option<Parameters>,
-                               pub Option<Block>,
-                               pub Type,
-                               pub Option<StorageClass>);
+pub struct FunctionDeclaration(
+    pub Identifier,
+    pub Option<Parameters>,
+    pub Option<Block>,
+    pub Type,
+    pub Option<StorageClass>
+);
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Declaration {
@@ -225,8 +232,9 @@ pub fn parse(token_list: &TokenList) -> Result<Ast> {
     Ok(Ast::Program(declarations))
 }
 
-fn parse_variable_declaration(tokens: &mut TokenStream, name: String, specifier: &Specifier)
-                              -> Result<VariableDeclaration> {
+fn parse_variable_declaration(
+    tokens: &mut TokenStream, name: String, specifier: &Specifier
+) -> Result<VariableDeclaration> {
     let expression = match tokens.peek()? {
         Token::Assignment => {
             tokens.next()?;
@@ -239,7 +247,12 @@ fn parse_variable_declaration(tokens: &mut TokenStream, name: String, specifier:
         token => bail!("parse_variable_declaration: unexpected token: '{token:?}'")
     };
 
-    Ok(VariableDeclaration(name, expression, specifier.type_of.clone(), specifier.storage_class.clone()))
+    Ok(VariableDeclaration(
+        name,
+        expression,
+        specifier.type_of.clone(),
+        specifier.storage_class.clone()
+    ))
 }
 
 fn parse_parameter_list(tokens: &mut TokenStream) -> Result<Option<Parameters>> {
@@ -275,8 +288,9 @@ fn parse_parameter_list(tokens: &mut TokenStream) -> Result<Option<Parameters>> 
     Ok(Some(params))
 }
 
-fn parse_function_declaration(tokens: &mut TokenStream, name: String, specifier: &Specifier)
-                              -> Result<FunctionDeclaration> {
+fn parse_function_declaration(
+    tokens: &mut TokenStream, name: String, specifier: &Specifier
+) -> Result<FunctionDeclaration> {
     let optional_params = parse_parameter_list(tokens)?;
 
     let optional_body = match tokens.peek()? {
@@ -300,7 +314,13 @@ fn parse_function_declaration(tokens: &mut TokenStream, name: String, specifier:
 
     let function_type = Type::FunType(Box::new(param_types), Box::new(specifier.type_of.clone()));
 
-    Ok(FunctionDeclaration(name, optional_params, optional_body, function_type, specifier.storage_class.clone()))
+    Ok(FunctionDeclaration(
+        name,
+        optional_params,
+        optional_body,
+        function_type,
+        specifier.storage_class.clone()
+    ))
 }
 
 fn parse_constant(token: &Token) -> Result<Expression> {
@@ -377,7 +397,9 @@ fn parse_declaration(tokens: &mut TokenStream) -> Result<Declaration> {
     };
 
     let declaration = match tokens.peek()? {
-        Token::OpenParen => Declaration::FunDecl(parse_function_declaration(tokens, identifier, &specifier)?),
+        Token::OpenParen => {
+            Declaration::FunDecl(parse_function_declaration(tokens, identifier, &specifier)?)
+        },
         _ => Declaration::VarDecl(parse_variable_declaration(tokens, identifier, &specifier)?)
     };
 
@@ -386,7 +408,9 @@ fn parse_declaration(tokens: &mut TokenStream) -> Result<Declaration> {
 
 fn parse_block_item(tokens: &mut TokenStream) -> Result<BlockItem> {
     let block_item = match tokens.peek()? {
-        Token::Int | Token::Long | Token::Static | Token::Extern => BlockItem::D(parse_declaration(tokens)?),
+        Token::Int | Token::Long | Token::Static | Token::Extern => {
+            BlockItem::D(parse_declaration(tokens)?)
+        },
         _ => BlockItem::S(parse_statement(tokens)?)
     };
 
@@ -474,7 +498,13 @@ fn parse_statement(tokens: &mut TokenStream) -> Result<Statement> {
             let optional_exp1 = parse_optional_expression(tokens, Token::Semicolon)?;
             let optional_exp2 = parse_optional_expression(tokens, Token::CloseParen)?;
             let statement = parse_statement(tokens)?;
-            Statement::For(for_init, optional_exp1, optional_exp2, Box::new(statement), temp_name("for"))
+            Statement::For(
+                for_init,
+                optional_exp1,
+                optional_exp2,
+                Box::new(statement),
+                temp_name("for")
+            )
         },
         Token::Semicolon => parse_null(tokens)?,
         Token::Return => parse_return(tokens)?,
@@ -489,7 +519,9 @@ fn parse_statement(tokens: &mut TokenStream) -> Result<Statement> {
     Ok(statement)
 }
 
-fn parse_optional_expression(tokens: &mut TokenStream, expected: Token) -> Result<Option<Expression>> {
+fn parse_optional_expression(
+    tokens: &mut TokenStream, expected: Token
+) -> Result<Option<Expression>> {
     let optional_expression = {
         if *tokens.peek()? == expected {
             tokens.expect(expected)?;
@@ -512,7 +544,9 @@ fn parse_for_init(tokens: &mut TokenStream) -> Result<ForInit> {
                 Declaration::FunDecl(_) => {
                     bail!("parse_for_init: Unexpected function declaration: {declaration:?}");
                 },
-                Declaration::VarDecl(variable_declaration) => ForInit::InitDecl(variable_declaration)
+                Declaration::VarDecl(variable_declaration) => {
+                    ForInit::InitDecl(variable_declaration)
+                },
             }
         },
         _ => {

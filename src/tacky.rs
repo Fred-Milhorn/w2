@@ -3,8 +3,9 @@
 //! Generate Tacky (TAC) from the AST created by parser.
 
 use crate::parse::{
-    Ast, BinaryOperator, Block, BlockItem, Const, Declaration, Expression, ForInit, FunctionDeclaration, Identifier,
-    Parameters, Statement, Type, UnaryOperator, VariableDeclaration
+    Ast, BinaryOperator, Block, BlockItem, Const, Declaration, Expression, ForInit,
+    FunctionDeclaration, Identifier, Parameters, Statement, Type, UnaryOperator,
+    VariableDeclaration
 };
 use crate::utils::{mklabel, temp_name};
 use crate::validate::{IdentAttrs, InitialValue, StaticInit, Symbol, SymbolTable};
@@ -80,10 +81,12 @@ pub fn convert_symbols_to_tacky(symbol_table: &SymbolTable) -> Definitions {
         if let IdentAttrs::Static(init, global) = &entry.attrs {
             match init {
                 InitialValue::Initial(initializer) => {
-                    definitions.push(Definition::VarDef(StaticVariable(name.to_string(),
-                                                                       *global,
-                                                                       entry.symbol_type.clone(),
-                                                                       initializer.clone())));
+                    definitions.push(Definition::VarDef(StaticVariable(
+                        name.to_string(),
+                        *global,
+                        entry.symbol_type.clone(),
+                        initializer.clone()
+                    )));
                 },
                 InitialValue::Tentative => {
                     let initializer = match entry.symbol_type {
@@ -91,10 +94,12 @@ pub fn convert_symbols_to_tacky(symbol_table: &SymbolTable) -> Definitions {
                         Type::Long => StaticInit::LongInit(0),
                         _ => todo!()
                     };
-                    definitions.push(Definition::VarDef(StaticVariable(name.to_string(),
-                                                                       *global,
-                                                                       entry.symbol_type.clone(),
-                                                                       initializer)));
+                    definitions.push(Definition::VarDef(StaticVariable(
+                        name.to_string(),
+                        *global,
+                        entry.symbol_type.clone(),
+                        initializer
+                    )));
                 },
                 InitialValue::NoInitializer => ()
             }
@@ -104,7 +109,9 @@ pub fn convert_symbols_to_tacky(symbol_table: &SymbolTable) -> Definitions {
     definitions
 }
 
-fn gen_function(declaration: &FunctionDeclaration, symbol_table: &mut SymbolTable) -> Result<Function> {
+fn gen_function(
+    declaration: &FunctionDeclaration, symbol_table: &mut SymbolTable
+) -> Result<Function> {
     let FunctionDeclaration(name, params, opt_body, _type, _storage_class) = declaration;
 
     let instructions = match opt_body {
@@ -113,7 +120,9 @@ fn gen_function(declaration: &FunctionDeclaration, symbol_table: &mut SymbolTabl
             emit_block(block, &mut instructions, symbol_table)?;
 
             // Patch functions without return and/or body
-            if instructions.is_empty() || !matches!(instructions.last(), Some(Instruction::Return(_))) {
+            if instructions.is_empty()
+                || !matches!(instructions.last(), Some(Instruction::Return(_)))
+            {
                 instructions.push(Instruction::Return(ZERO));
             }
             Some(instructions)
@@ -135,14 +144,22 @@ fn gen_function(declaration: &FunctionDeclaration, symbol_table: &mut SymbolTabl
     Ok(Function(name.to_string(), global, params.clone(), instructions))
 }
 
-fn emit_block(block: &Block, instructions: &mut Instructions, symbol_table: &mut SymbolTable) -> Result<()> {
+fn emit_block(
+    block: &Block, instructions: &mut Instructions, symbol_table: &mut SymbolTable
+) -> Result<()> {
     for item in block {
         match item {
             BlockItem::S(statement) => {
                 emit_statement(statement, instructions, symbol_table)?;
             },
             BlockItem::D(declaration) => {
-                if let Declaration::VarDecl(VariableDeclaration(identifier, Some(expression), _, None)) = declaration {
+                if let Declaration::VarDecl(VariableDeclaration(
+                    identifier,
+                    Some(expression),
+                    _,
+                    None
+                )) = declaration
+                {
                     let value = emit_tacky(expression, instructions, symbol_table)?;
                     instructions.push(Instruction::Copy(value, Val::Var(identifier.clone())));
                 }
@@ -153,8 +170,9 @@ fn emit_block(block: &Block, instructions: &mut Instructions, symbol_table: &mut
     Ok(())
 }
 
-fn emit_statement(statement: &Statement, instructions: &mut Instructions, symbol_table: &mut SymbolTable)
-                  -> Result<()> {
+fn emit_statement(
+    statement: &Statement, instructions: &mut Instructions, symbol_table: &mut SymbolTable
+) -> Result<()> {
     match statement {
         Statement::Return(expression) => {
             let value = emit_tacky(expression, instructions, symbol_table)?;
@@ -244,11 +262,14 @@ fn emit_statement(statement: &Statement, instructions: &mut Instructions, symbol
 
 fn make_tacky_variable(prefix: &str, var_type: &Type, symbol_table: &mut SymbolTable) -> Val {
     let var_name = temp_name(prefix);
-    symbol_table.add(&var_name, Symbol { symbol_type: var_type.clone(), attrs: IdentAttrs::Local });
+    symbol_table
+        .add(&var_name, Symbol { symbol_type: var_type.clone(), attrs: IdentAttrs::Local });
     Val::Var(var_name)
 }
 
-fn emit_tacky(expression: &Expression, instructions: &mut Instructions, symbol_table: &mut SymbolTable) -> Result<Val> {
+fn emit_tacky(
+    expression: &Expression, instructions: &mut Instructions, symbol_table: &mut SymbolTable
+) -> Result<Val> {
     let value = match expression {
         Expression::Cast(target_type, expression, _exp_type) => {
             let result = emit_tacky(expression, instructions, symbol_table)?;
@@ -264,7 +285,7 @@ fn emit_tacky(expression: &Expression, instructions: &mut Instructions, symbol_t
                 dst
             }
         },
-        Expression::FunctionCall(identifier, args, func_type) => {
+        Expression::FunctionCall(identifier, args, return_type) => {
             let args_exps = match args {
                 Some(arguments) => {
                     let mut values = Vec::new();
@@ -280,8 +301,12 @@ fn emit_tacky(expression: &Expression, instructions: &mut Instructions, symbol_t
                 },
                 None => None
             };
-            let result = make_tacky_variable("result", func_type, symbol_table);
-            instructions.push(Instruction::FunCall(identifier.to_string(), args_exps, result.clone()));
+            let result = make_tacky_variable("result", return_type, symbol_table);
+            instructions.push(Instruction::FunCall(
+                identifier.to_string(),
+                args_exps,
+                result.clone()
+            ));
             result
         },
         Expression::Conditional(condition, then_branch, else_branch, cond_type) => {
@@ -352,10 +377,11 @@ fn emit_tacky(expression: &Expression, instructions: &mut Instructions, symbol_t
         },
         Expression::CompoundAssignment(operator, lhs, rhs, comp_type) => {
             let lvalue = emit_tacky(lhs, instructions, symbol_table)?;
-            let result =
-                emit_tacky(&Expression::Binary(operator.clone(), lhs.clone(), rhs.clone(), comp_type.clone()),
-                           instructions,
-                           symbol_table)?;
+            let result = emit_tacky(
+                &Expression::Binary(operator.clone(), lhs.clone(), rhs.clone(), comp_type.clone()),
+                instructions,
+                symbol_table
+            )?;
             instructions.push(Instruction::Copy(result, lvalue.clone()));
             lvalue
         }

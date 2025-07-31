@@ -103,7 +103,7 @@ fn main() -> Result<()> {
 
 fn run(opts: &Opts, file: &PathBuf) -> Result<()> {
     if let Some(extension) = file.extension()
-       && extension != "c"
+        && extension != "c"
     {
         bail!("Expected C source file: {file:?}");
     }
@@ -151,13 +151,13 @@ fn run(opts: &Opts, file: &PathBuf) -> Result<()> {
         process::exit(0);
     }
 
-    // let assembly = code::emit(&code)?;
-    // if opts.debug {
-    //     println!("assembly:\n{assembly}\n");
-    // }
-    // if opts.emitcode {
-    //     process::exit(0);
-    // }
+    let assembly = code::emit(&code)?;
+    if opts.debug {
+        println!("assembly:\n{assembly}\n");
+    }
+    if opts.emitcode {
+        process::exit(0);
+    }
 
     // let file_s = file_i.with_extension("s");
     // fs::write(&file_s, &assembly)?;
