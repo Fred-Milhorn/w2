@@ -143,7 +143,7 @@ fn run(opts: &Opts, file: &PathBuf) -> Result<()> {
         process::exit(0);
     }
 
-    let code = code::generate(&tacky, &symbol_table);
+    let code = code::generate(&tacky, &symbol_table)?;
     if opts.debug {
         println!("code: {:?}\n", code);
     }

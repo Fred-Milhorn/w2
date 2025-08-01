@@ -15,7 +15,7 @@ use crate::utils::temp_name;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum StaticInit {
-    IntInit(i32),
+    IntInit(i64),
     LongInit(i64)
 }
 
@@ -170,10 +170,10 @@ fn resolve_file_scope_variables(declaration: &VariableDeclaration, ident_map: &m
 }
 
 fn resolve_parameter(parameter: &Parameter, ident_map: &mut IdentMap) -> Result<Parameter> {
-    if let Some(entry) = ident_map.get(&parameter.name) {
-        if entry.from_current_scope {
-            bail!("resolve_declaration: duplicate declaration of variable '{parameter:?}'");
-        }
+    if let Some(entry) = ident_map.get(&parameter.name)
+        && entry.from_current_scope
+    {
+        bail!("resolve_declaration: duplicate declaration of variable '{parameter:?}'");
     }
 
     let unique_name = temp_name(&parameter.name);
@@ -187,10 +187,11 @@ fn resolve_function(
 ) -> Result<FunctionDeclaration> {
     let FunctionDeclaration(name, opt_params, opt_body, fn_type, opt_storage_class) = declaration;
 
-    if let Some(entry) = ident_map.get(name) {
-        if entry.from_current_scope && !entry.has_linkage {
-            bail!("resolve_function: duplicate function declaration: '{name}'");
-        }
+    if let Some(entry) = ident_map.get(name)
+        && entry.from_current_scope
+        && !entry.has_linkage
+    {
+        bail!("resolve_function: duplicate function declaration: '{name}'");
     }
     ident_map.add(name, name, fn_type, true, true);
 
@@ -247,12 +248,11 @@ fn resolve_local_variable(
 ) -> Result<VariableDeclaration> {
     let VariableDeclaration(name, init, var_type, opt_storage_class) = declaration;
 
-    if let Some(entry) = ident_map.get(name) {
-        if entry.from_current_scope
-            && !(entry.has_linkage && matches!(opt_storage_class, Some(StorageClass::Extern)))
-        {
-            bail!("resolve_local_variable: conflicting local declarations of variable '{name}'");
-        }
+    if let Some(entry) = ident_map.get(name)
+        && entry.from_current_scope
+        && !(entry.has_linkage && matches!(opt_storage_class, Some(StorageClass::Extern)))
+    {
+        bail!("resolve_local_variable: conflicting local declarations of variable '{name}'");
     }
 
     match opt_storage_class {
@@ -596,10 +596,10 @@ fn typecheck_expression(
         Expression::FunctionCall(name, opt_args, _) => match symbol_table.get(name) {
             Some(entry) => match &entry.symbol_type {
                 Type::FunType(param_types, ret_type) => {
-                    if let Some(args) = opt_args {
-                        if args.len() != param_types.len() {
-                            bail!("Function called with wrong number of arguments: {name:?}");
-                        }
+                    if let Some(args) = opt_args
+                        && args.len() != param_types.len()
+                    {
+                        bail!("Function called with wrong number of arguments: {name:?}");
                     }
 
                     let new_args = match opt_args {
@@ -629,14 +629,14 @@ fn typecheck_expression(
             },
             None => bail!("Undeclared variable in expression: {name:?}")
         },
-        Expression::Assignment(lhs, rhs, _assign_type) => {
+        Expression::Assignment(lhs, rhs, _) => {
             let typed_left = typecheck_expression(lhs, symbol_table)?;
             let typed_right = typecheck_expression(rhs, symbol_table)?;
             let left_type = typed_left.get_type();
             let converted_right = convert_to(typed_right, left_type.clone());
             Expression::Assignment(Box::new(typed_left), Box::new(converted_right), left_type)
         },
-        Expression::Unary(operator, expression, _unary_type) => {
+        Expression::Unary(operator, expression, _) => {
             let typed_inner = typecheck_expression(expression, symbol_table)?;
             let inner_type = match operator {
                 UnaryOperator::Not => Type::Int,
@@ -644,7 +644,7 @@ fn typecheck_expression(
             };
             Expression::Unary(operator.clone(), Box::new(typed_inner), inner_type)
         },
-        Expression::Binary(operator, lhs, rhs, _binary_type) => {
+        Expression::Binary(operator, lhs, rhs, _) => {
             let typed_lhs = typecheck_expression(lhs, symbol_table)?;
             let typed_rhs = typecheck_expression(rhs, symbol_table)?;
 
@@ -681,28 +681,41 @@ fn typecheck_expression(
                 }
             }
         },
-        Expression::CompoundAssignment(operator, lvalue, rhs, comp_type) => {
+        Expression::CompoundAssignment(operator, lhs, rhs, _) => {
+            let typed_lhs = typecheck_expression(lhs, symbol_table)?;
+            let typed_rhs = typecheck_expression(rhs, symbol_table)?;
+            let rhs_type = typed_rhs.get_type();
             Expression::CompoundAssignment(
                 operator.clone(),
-                Box::new(typecheck_expression(lvalue, symbol_table)?),
-                Box::new(typecheck_expression(rhs, symbol_table)?),
-                comp_type.clone()
+                Box::new(typed_lhs),
+                Box::new(typed_rhs),
+                rhs_type
             )
         },
-        Expression::Conditional(condition, then_branch, else_branch, cond_type) => {
+        Expression::Conditional(condition, then_branch, else_branch, _) => {
+            let typed_cond = typecheck_expression(condition, symbol_table)?;
+            let typed_then = typecheck_expression(then_branch, symbol_table)?;
+            let typed_else = typecheck_expression(else_branch, symbol_table)?;
+            let common_type = get_common_type(typed_then.get_type(), typed_else.get_type());
+            let converted_then = convert_to(typed_then.clone(), common_type.clone());
+            let converted_else = convert_to(typed_else.clone(), common_type.clone());
             Expression::Conditional(
-                Box::new(typecheck_expression(condition, symbol_table)?),
-                Box::new(typecheck_expression(then_branch, symbol_table)?),
-                Box::new(typecheck_expression(else_branch, symbol_table)?),
-                cond_type.clone()
+                Box::new(typed_cond),
+                Box::new(converted_then),
+                Box::new(converted_else),
+                common_type
             )
         },
-        Expression::Cast(target_type, cast_exp, _cast_type) => Expression::Cast(
-            target_type.clone(),
-            Box::new(typecheck_expression(cast_exp, symbol_table)?),
-            target_type.clone()
-        ),
-        Expression::Constant(const_value, _const_type) => {
+        Expression::Cast(target_type, cast_exp, _) => {
+            let typed_exp = typecheck_expression(cast_exp, symbol_table)?;
+            let exp_type = typed_exp.get_type();
+            Expression::Cast(
+                target_type.clone(),
+                Box::new(typecheck_expression(cast_exp, symbol_table)?),
+                exp_type
+            )
+        },
+        Expression::Constant(const_value, _) => {
             let new_type = match const_value {
                 Const::ConstInt(_) => Type::Int,
                 Const::ConstLong(_) => Type::Long

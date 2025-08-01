@@ -7,12 +7,15 @@
 # Unignore all dirs
 !*/
 
+/cprogs
+.DS_Store
+!Makefile
 /target
 /writing-a-c-compiler-tests
-!Makefile
-.DS_Store
 
 *.c
-*.o
 *.i
+*.lisp
+*.log
+*.o
 *.s

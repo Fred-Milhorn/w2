@@ -48,7 +48,7 @@ pub enum BinaryOperator {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Const {
-    ConstInt(i32),
+    ConstInt(i64),
     ConstLong(i64)
 }
 
@@ -187,7 +187,7 @@ pub enum Ast {
 pub struct TokenStream<'a>(Peekable<Iter<'a, Token>>);
 
 impl TokenStream<'_> {
-    fn new(tokens: &TokenList) -> TokenStream {
+    fn new(tokens: &TokenList) -> TokenStream<'_> {
         TokenStream(tokens.iter().peekable())
     }
 
@@ -328,7 +328,7 @@ fn parse_constant(token: &Token) -> Result<Expression> {
         Token::Constant(value) => {
             let number: i64 = value.parse()?;
             if number <= ((2 ^ 31) - 1) {
-                Expression::Constant(Const::ConstInt(number as i32), Type::Int)
+                Expression::Constant(Const::ConstInt(number), Type::Int)
             } else {
                 Expression::Constant(Const::ConstLong(number), Type::Long)
             }
