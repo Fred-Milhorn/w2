@@ -5,7 +5,7 @@
 use crate::code::AssemblyType;
 use crate::parse::{Const, Expression, Type};
 use crate::tacky::Val;
-use crate::validate::{InitialValue, StaticInit, SymbolTable};
+use crate::validate::{InitialValue, StaticInit, get_symbol};
 
 use anyhow::{Result, bail};
 
@@ -56,11 +56,11 @@ pub fn convert_static_init(
     Ok(initial_value)
 }
 
-pub fn val_type(value: &Val, symbol_table: &SymbolTable) -> Result<AssemblyType> {
+pub fn val_type(value: &Val) -> Result<AssemblyType> {
     let atype = match value {
         Val::Constant(Const::ConstInt(_)) => AssemblyType::Longword,
         Val::Constant(Const::ConstLong(_)) => AssemblyType::Quadword,
-        Val::Var(identifier) => match symbol_table.get(identifier) {
+        Val::Var(identifier) => match get_symbol(identifier) {
             Some(entry) => match entry.symbol_type {
                 Type::Int => AssemblyType::Longword,
                 Type::Long => AssemblyType::Quadword,

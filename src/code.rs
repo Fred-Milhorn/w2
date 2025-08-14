@@ -6,7 +6,7 @@ use crate::convert::val_type;
 use crate::parse;
 use crate::parse::Identifier;
 use crate::tacky;
-use crate::validate::{IdentAttrs, StaticInit, Symbol, SymbolTable};
+use crate::validate::{IdentAttrs, StaticInit, Symbol, get_symbol};
 
 use anyhow::Result;
 use std::collections::HashMap;
@@ -242,15 +242,15 @@ impl From<&tacky::Val> for Operand {
     }
 }
 
-pub fn generate(ast: &tacky::Tacky, symbol_table: &SymbolTable) -> Result<Assembly> {
+pub fn generate(ast: &tacky::Tacky) -> Result<Assembly> {
     let tacky::Tacky::Program(declarations) = ast;
     let mut definitions: Definitions = Vec::new();
 
     for declaration in declarations {
         match declaration {
             tacky::Definition::FunDef(function_declaration) => {
-                let mut function = gen_assembly(function_declaration, symbol_table)?;
-                function = fixup_pseudo(function, symbol_table);
+                let mut function = gen_assembly(function_declaration)?;
+                function = fixup_pseudo(function);
                 function = fixup_invalid(function);
                 function = allocate_stack(function);
                 definitions.push(Definition::FunDef(function));
@@ -273,7 +273,7 @@ pub fn generate(ast: &tacky::Tacky, symbol_table: &SymbolTable) -> Result<Assemb
 
 fn convert_function_call(
     name: &String, arguments: &Option<tacky::Arguments>, dst: &tacky::Val,
-    symbol_table: &SymbolTable, instructions: &mut Instructions
+    instructions: &mut Instructions
 ) -> Result<()> {
     let mut stack_padding = 0; // in bytes
 
@@ -294,13 +294,13 @@ fn convert_function_call(
 
         for (index, tacky_arg) in register_args.iter().enumerate() {
             let register = ARG_REGISTERS[index];
-            let atype = val_type(tacky_arg, symbol_table)?;
+            let atype = val_type(tacky_arg)?;
             instructions.push(Instruction::Mov(atype, tacky_arg.into(), Operand::Reg(register)));
         }
 
         for tacky_arg in stack_args.iter().rev() {
             let assembly_arg = tacky_arg.into();
-            let atype = val_type(tacky_arg, symbol_table)?;
+            let atype = val_type(tacky_arg)?;
             if matches!(assembly_arg, Operand::Imm(_) | Operand::Reg(_))
                 || matches!(atype, AssemblyType::Quadword)
             {
@@ -329,49 +329,43 @@ fn convert_function_call(
         instructions.push(Instruction::Call(name.to_string()));
     }
 
-    instructions.push(Instruction::Mov(
-        val_type(dst, symbol_table)?,
-        Operand::Reg(Register::AX),
-        dst.into()
-    ));
+    instructions.push(Instruction::Mov(val_type(dst)?, Operand::Reg(Register::AX), dst.into()));
 
     Ok(())
 }
 
-fn tacky_to_assembly(
-    instruction: &tacky::Instruction, symbol_table: &SymbolTable
-) -> Result<Instructions> {
+fn tacky_to_assembly(instruction: &tacky::Instruction) -> Result<Instructions> {
     let mut instructions: Instructions = Vec::new();
 
     match instruction {
         tacky::Instruction::FunCall(name, args, dst) => {
-            convert_function_call(name, args, dst, symbol_table, &mut instructions)?;
+            convert_function_call(name, args, dst, &mut instructions)?;
         },
         tacky::Instruction::Return(val) => {
             instructions.push(Instruction::Mov(
-                val_type(val, symbol_table)?,
+                val_type(val)?,
                 val.into(),
                 Operand::Reg(Register::AX)
             ));
             instructions.push(Instruction::Ret);
         },
         tacky::Instruction::Unary(parse::UnaryOperator::Not, src, dst) => {
-            let dst_type = val_type(dst, symbol_table)?;
-            let src_type = val_type(src, symbol_table)?;
+            let dst_type = val_type(dst)?;
+            let src_type = val_type(src)?;
 
             instructions.push(Instruction::Cmp(src_type, Operand::Imm(0), src.into()));
             instructions.push(Instruction::Mov(dst_type, Operand::Imm(0), dst.into()));
             instructions.push(Instruction::SetCC(ConditionCode::E, dst.into()));
         },
         tacky::Instruction::Unary(operator, src, dst) => {
-            let src_type = val_type(src, symbol_table)?;
+            let src_type = val_type(src)?;
 
             instructions.push(Instruction::Mov(src_type.clone(), src.into(), dst.into()));
             instructions.push(Instruction::Unary(operator.into(), src_type.clone(), dst.into()));
         },
         tacky::Instruction::Binary(operator, src1, src2, dst) => {
-            let dst_type = val_type(dst, symbol_table)?;
-            let src1_type = val_type(src1, symbol_table)?;
+            let dst_type = val_type(dst)?;
+            let src1_type = val_type(src1)?;
 
             match operator {
                 parse::BinaryOperator::Divide => {
@@ -463,7 +457,7 @@ fn tacky_to_assembly(
             instructions.push(Instruction::JmpCC(ConditionCode::NE, target.to_string()));
         },
         tacky::Instruction::Copy(src, dst) => {
-            let src_type = val_type(src, symbol_table)?;
+            let src_type = val_type(src)?;
             instructions.push(Instruction::Mov(src_type, src.into(), dst.into()));
         },
         tacky::Instruction::Label(target) => {
@@ -480,7 +474,7 @@ fn tacky_to_assembly(
     Ok(instructions)
 }
 
-fn gen_assembly(function: &tacky::Function, symbol_table: &SymbolTable) -> Result<Function> {
+fn gen_assembly(function: &tacky::Function) -> Result<Function> {
     let tacky::Function(name, global, parameters, body) = function;
     let instructions = {
         let mut assembly: Instructions = Vec::new();
@@ -512,7 +506,7 @@ fn gen_assembly(function: &tacky::Function, symbol_table: &SymbolTable) -> Resul
 
         if let Some(instructions) = body {
             for instruction in instructions {
-                let mut code = tacky_to_assembly(instruction, symbol_table)?;
+                let mut code = tacky_to_assembly(instruction)?;
                 assembly.append(&mut code);
             }
         }
@@ -540,7 +534,7 @@ fn allocate_stack(function: Function) -> Function {
     }
 }
 
-fn fixup_pseudo(function: Function, symbol_table: &SymbolTable) -> Function {
+fn fixup_pseudo(function: Function) -> Function {
     let Function(name, global, _, body) = function;
     let mut pseudo_map: HashMap<String, i32> = HashMap::new();
     let mut stack_depth: i32 = 0;
@@ -549,7 +543,7 @@ fn fixup_pseudo(function: Function, symbol_table: &SymbolTable) -> Function {
     let mut fixup = |operand: &Operand| -> Operand {
         const TMPSIZE: i32 = 4;
         if let Operand::Pseudo(identifier) = operand {
-            match symbol_table.get(identifier) {
+            match get_symbol(identifier) {
                 Some(Symbol { attrs: IdentAttrs::Static(_, _), .. }) => {
                     Operand::Data(identifier.to_string())
                 },
