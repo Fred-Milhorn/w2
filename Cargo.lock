@@ -59,17 +59,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2b15c43186be67a4fd63bee50d0303afffcef381492ebe2c5d87f324e1b8815c"
 
 [[package]]
-name = "simple-counter"
-version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4bb57743b52ea059937169c0061d70298fe2df1d2c988b44caae79dd979d9b49"
-
-[[package]]
 name = "w2"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "once_cell",
  "regex",
- "simple-counter",
 ]

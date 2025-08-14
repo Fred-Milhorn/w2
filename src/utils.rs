@@ -7,15 +7,29 @@
 //! with run_cli() being an exception.
 
 use anyhow::{Context, Result, anyhow};
+use std::cell::Cell;
 use std::path::PathBuf;
 use std::process::Command;
 
-pub fn temp_name(prefix: &str) -> String {
-    use crate::Counter;
-    prefix.to_owned() + "." + &Counter::next().to_string()
+thread_local! {
+    static COUNTER: Cell<u32> = const { Cell::new(0) };
 }
 
 #[allow(dead_code)]
+pub fn counter_reset() {
+    COUNTER.with(|x| x.set(0));
+}
+
+pub fn counter_next() -> u32 {
+    COUNTER.with(|x| x.set(x.get() + 1));
+    COUNTER.get()
+}
+
+pub fn temp_name(prefix: &str) -> String {
+    let next = counter_next();
+    prefix.to_owned() + "." + &(next.to_string())
+}
+
 pub fn mklabel(prefix: &str, suffix: &str) -> String {
     prefix.to_owned() + "_" + suffix
 }

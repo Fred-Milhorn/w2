@@ -16,11 +16,6 @@
 //! because I've wanted to write a C compiler for a long time (years), and I wanted to
 //! have a real, substative project in Rust so I could better learn the language.
 
-// Apparently, this MUST be in the root crate. Used by utils::temp_name() only.
-#[macro_use]
-extern crate simple_counter;
-generate_counter!(Counter, usize);
-
 use anyhow::{Result, bail};
 use std::env;
 use std::fs;
@@ -35,8 +30,7 @@ mod tacky;
 mod utils;
 mod validate;
 
-#[rustfmt::skip]
-#[derive(Debug)]
+#[derive(Debug, Default)]
 struct Opts {
     debug:    bool,
     lex:      bool,
@@ -46,7 +40,7 @@ struct Opts {
     codegen:  bool,
     emitcode: bool,
     compile:  bool,
-    files:    Vec<PathBuf>,
+    files:    Vec<PathBuf>
 }
 
 fn usage(msg: &str) -> ! {
@@ -56,17 +50,7 @@ fn usage(msg: &str) -> ! {
 
 #[rustfmt::skip]
 fn main() -> Result<()> {
-    let mut opts = Opts {
-        debug:    false,
-        lex:      false,
-        parse:    false,
-        validate: false,
-        tacky:    false,
-        codegen:  false,
-        emitcode: false,
-        compile:  false,
-        files:    Vec::new(),
-    };
+    let mut opts = Opts::default();
 
     for option in env::args().skip(1) {
         if option.starts_with("-") {
@@ -127,7 +111,7 @@ fn run(opts: &Opts, file: &PathBuf) -> Result<()> {
         process::exit(0);
     }
 
-    let (validated_ast, mut symbol_table) = validate::validate(ast)?;
+    let validated_ast = validate::validate(ast)?;
     if opts.debug {
         println!("validate: {validated_ast:?}\n");
     }
@@ -135,7 +119,7 @@ fn run(opts: &Opts, file: &PathBuf) -> Result<()> {
         process::exit(0);
     }
 
-    let tacky = tacky::generate(&validated_ast, &mut symbol_table)?;
+    let tacky = tacky::generate(&validated_ast)?;
     if opts.debug {
         println!("tacky: {tacky:?}\n");
     }
@@ -143,7 +127,7 @@ fn run(opts: &Opts, file: &PathBuf) -> Result<()> {
         process::exit(0);
     }
 
-    let code = code::generate(&tacky, &symbol_table)?;
+    let code = code::generate(&tacky)?;
     if opts.debug {
         println!("code: {:?}\n", code);
     }
@@ -159,14 +143,14 @@ fn run(opts: &Opts, file: &PathBuf) -> Result<()> {
         process::exit(0);
     }
 
-    // let file_s = file_i.with_extension("s");
-    // fs::write(&file_s, &assembly)?;
+    let file_s = file_i.with_extension("s");
+    fs::write(&file_s, &assembly)?;
 
-    // if opts.compile {
-    //     utils::create_object_file(&file_s)?;
-    // } else {
-    //     utils::create_executable(&file_s)?;
-    // }
+    if opts.compile {
+        utils::create_object_file(&file_s)?;
+    } else {
+        utils::create_executable(&file_s)?;
+    }
 
     Ok(())
 }
