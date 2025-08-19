@@ -249,10 +249,7 @@ pub fn generate(ast: &tacky::Tacky) -> Result<Assembly> {
     for declaration in declarations {
         match declaration {
             tacky::Definition::FunDef(function_declaration) => {
-                let mut function = gen_assembly(function_declaration)?;
-                function = fixup_pseudo(function);
-                function = fixup_invalid(function);
-                function = allocate_stack(function);
+                let function = gen_assembly(function_declaration)?;
                 definitions.push(Definition::FunDef(function));
             },
             tacky::Definition::VarDef(tacky::StaticVariable(name, global, var_type, init)) => {
@@ -265,6 +262,17 @@ pub fn generate(ast: &tacky::Tacky) -> Result<Assembly> {
                     init.clone()
                 )));
             }
+        }
+    }
+
+    for definition in definitions.iter_mut() {
+        match definition {
+            Definition::FunDef(function) => {
+                *function = fixup_pseudo(function);
+                *function = fixup_invalid(function);
+                *function = allocate_stack(function);
+            },
+            _ => ()
         }
     }
 
@@ -516,9 +524,10 @@ fn gen_assembly(function: &tacky::Function) -> Result<Function> {
     Ok(Function(name.clone(), *global, 0, instructions))
 }
 
-fn allocate_stack(function: Function) -> Function {
-    match function {
-        Function(name, global, stack_size, Some(mut instructions)) if stack_size > 0 => {
+fn allocate_stack(function: &Function) -> Function {
+    let mut new_function = function.clone();
+    match new_function {
+        Function(_, _, stack_size, Some(ref mut instructions)) if stack_size > 0 => {
             instructions.insert(
                 0,
                 Instruction::Binary(
@@ -528,13 +537,13 @@ fn allocate_stack(function: Function) -> Function {
                     Operand::Reg(Register::SP)
                 )
             );
-            Function(name, global, stack_size, Some(instructions))
         },
-        _ => function
-    }
+        _ => ()
+    };
+    new_function
 }
 
-fn fixup_pseudo(function: Function) -> Function {
+fn fixup_pseudo(function: &Function) -> Function {
     let Function(name, global, _, body) = function;
     let mut pseudo_map: HashMap<String, i32> = HashMap::new();
     let mut stack_depth: i32 = 0;
@@ -591,10 +600,10 @@ fn fixup_pseudo(function: Function) -> Function {
         stack_size = (stack_depth.abs() / 16) * 16 + 16
     }
 
-    Function(name.clone(), global, stack_size, instructions)
+    Function(name.clone(), *global, stack_size, instructions)
 }
 
-fn fixup_invalid(function: Function) -> Function {
+fn fixup_invalid(function: &Function) -> Function {
     let Function(name, global, stack_size, body) = function;
 
     let instructions = body.as_ref().map(|block| -> Instructions {
@@ -721,7 +730,7 @@ fn fixup_invalid(function: Function) -> Function {
         instructions
     });
 
-    Function(name.clone(), global, stack_size, instructions)
+    Function(name.clone(), *global, *stack_size, instructions)
 }
 
 pub fn emit(assembly: &Assembly) -> Result<String> {
