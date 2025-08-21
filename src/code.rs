@@ -6,7 +6,7 @@ use crate::convert::val_type;
 use crate::parse;
 use crate::parse::Identifier;
 use crate::tacky;
-use crate::validate::{IdentAttrs, StaticInit, Symbol, get_symbol};
+use crate::validate::{IdentAttrs, StaticInit, SYMBOLS, BACKEND, BackendSymbol, Symbol, get_symbol};
 
 use anyhow::Result;
 use std::collections::HashMap;
@@ -264,6 +264,27 @@ pub fn generate(ast: &tacky::Tacky) -> Result<Assembly> {
             }
         }
     }
+
+    // Populate the backend symbol table
+    SYMBOLS.with_borrow(|symbol_table| {
+        BACKEND.with_borrow_mut(|backend_table| {
+            for (name, symbol) in symbol_table {
+                match symbol.attrs {
+                    IdentAttrs::Static(_, _) => {
+                        let asm_type: AssemblyType = symbol.symbol_type.clone().into();
+                        backend_table.add(name, BackendSymbol::ObjEntry(asm_type, true));
+                    },
+                    IdentAttrs::Function(is_defined, _) => {
+                        backend_table.add(name, BackendSymbol::FunEntry(is_defined));
+                    },
+                    IdentAttrs::Local => {
+                        let asm_type: AssemblyType = symbol.symbol_type.clone().into();
+                        backend_table.add(name, BackendSymbol::ObjEntry(asm_type, false));
+                    }
+                };
+            }   
+        });
+    });
 
     for definition in definitions.iter_mut() {
         match definition {
