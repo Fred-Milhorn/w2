@@ -6,6 +6,7 @@ use anyhow::{Result, bail};
 use std::cell::RefCell;
 use std::collections::HashMap;
 
+use crate::code::AssemblyType;
 use crate::convert::{convert_static_init, convert_to, get_common_type};
 use crate::parse::{
     Ast, BinaryOperator, Block, BlockItem, Const, Declaration, Expression, ForInit,
@@ -73,6 +74,36 @@ impl<'a> IntoIterator for &'a SymbolTable {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub enum BackendSymbol {
+    ObjEntry(AssemblyType, bool),
+    FunEntry(bool)
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct BackendTable(HashMap<Identifier, BackendSymbol>);
+
+impl Default for BackendTable {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl BackendTable {
+    pub fn new() -> Self {
+        Self(HashMap::new())
+    }
+
+    #[allow(dead_code)]
+    pub fn get(&self, name: &str) -> Option<BackendSymbol> {
+        self.0.get(name).cloned()
+    }
+
+    pub fn add(&mut self, name: &str, symbol: BackendSymbol) -> Option<BackendSymbol> {
+        self.0.insert(name.to_string(), symbol)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
 struct MapEntry {
     new_name:           Identifier,
     has_type:           Type,
@@ -125,7 +156,8 @@ impl IdentMap {
 }
 
 thread_local! {
-    pub static SYMBOLS:  RefCell<SymbolTable> = RefCell::new(SymbolTable::default());
+    pub static SYMBOLS: RefCell<SymbolTable> = RefCell::new(SymbolTable::default());
+    pub static BACKEND: RefCell<BackendTable> = RefCell::new(BackendTable::default());
 }
 
 pub fn add_symbol(name: &str, symbol: Symbol) -> Option<Symbol> {
@@ -134,6 +166,16 @@ pub fn add_symbol(name: &str, symbol: Symbol) -> Option<Symbol> {
 
 pub fn get_symbol(name: &str) -> Option<Symbol> {
     SYMBOLS.with_borrow(|symbols| symbols.get(name))
+}
+
+#[allow(dead_code)]
+pub fn add_backend(name: &str, symbol: BackendSymbol) -> Option<BackendSymbol> {
+    BACKEND.with_borrow_mut(|symbols| symbols.add(name, symbol))
+}
+
+#[allow(dead_code)]
+pub fn get_backend(name: &str) -> Option<BackendSymbol> {
+    BACKEND.with_borrow(|symbols| symbols.get(name))
 }
 
 pub fn validate(mut ast: Ast) -> Result<Ast> {
