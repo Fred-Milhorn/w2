@@ -6,7 +6,7 @@ use crate::convert::val_type;
 use crate::parse;
 use crate::parse::Identifier;
 use crate::tacky;
-use crate::validate::{IdentAttrs, StaticInit, SYMBOLS, BACKEND, BackendSymbol, Symbol, get_symbol};
+use crate::validate::{IdentAttrs, StaticInit, SYMBOLS, BACKEND, BackendSymbol, get_backend};
 
 use anyhow::Result;
 use std::collections::HashMap;
@@ -287,13 +287,10 @@ pub fn generate(ast: &tacky::Tacky) -> Result<Assembly> {
     });
 
     for definition in definitions.iter_mut() {
-        match definition {
-            Definition::FunDef(function) => {
-                *function = fixup_pseudo(function);
-                *function = fixup_invalid(function);
-                *function = allocate_stack(function);
-            },
-            _ => ()
+        if let Definition::FunDef(function) = definition {
+            *function = fixup_pseudo(function);
+            *function = fixup_invalid(function);
+            *function = allocate_stack(function);
         }
     }
 
@@ -573,8 +570,8 @@ fn fixup_pseudo(function: &Function) -> Function {
     let mut fixup = |operand: &Operand| -> Operand {
         const TMPSIZE: i32 = 4;
         if let Operand::Pseudo(identifier) = operand {
-            match get_symbol(identifier) {
-                Some(Symbol { attrs: IdentAttrs::Static(_, _), .. }) => {
+            match get_backend(identifier) {
+                Some(BackendSymbol::ObjEntry(_, true)) => {
                     Operand::Data(identifier.to_string())
                 },
                 _ => match pseudo_map.get(identifier) {
