@@ -43,6 +43,10 @@ When extending the language or backend, keep these guardrails:
 - Run compiler: `target/debug/w2 [--debug] [--lex|--parse|--validate|--tacky|--codegen|--emitcode|--compile] file.c`.
 - Tests: Use `w2test.sh` wrapper around `writing-a-c-compiler-tests/test_compiler`. Example: `CHAPTER=10 ./w2test.sh` or `CHAPTER=10 STAGE=parse ./w2test.sh`.
 
+## Distribution/installation
+- This repository does not publish binary releases. Users are expected to clone the repo and build locally with `cargo build`.
+- Avoid suggesting install commands like `cargo install <crate>` or downloading binaries from GitHub releases.
+
 ## Style do’s and don’ts for suggestions
 Do:
 - Keep matches exhaustive and explicit; prefer small helper fns for clarity.
