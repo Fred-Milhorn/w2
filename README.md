@@ -12,6 +12,14 @@ Pipeline: preprocess C ➜ lex ➜ parse ➜ validate ➜ generate three-address
 
 Target platform: macOS x86-64 (Mach-O syntax, underscore-prefixed symbols). On Apple Silicon, assembling/running x86-64 binaries may require Rosetta and passing `-arch x86_64` (the current driver does not add that flag).
 
+## Installation
+This project does not publish binary releases. Clone the repository and build locally:
+```bash
+git clone https://github.com/Fred-Milhorn/w2.git
+cd w2
+cargo build
+```
+
 ## Build
 ```bash
 # Build the compiler
