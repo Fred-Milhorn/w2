@@ -12,21 +12,14 @@ usage() {
     echo " -s, --stage     Compiler stage we're testing"
 }
 
-has_argument() {
-    # Accept either --flag=value form or --flag value form.
-    local current="$1"
-    local next="$2"
+extract_argument_pair() {
+    # $1 = current token, $2 = next token
+    local current="$1"; local next="$2"
     if [[ "$current" == *=* ]]; then
-        return 0
+        echo "${current#*=}"
+    else
+        echo "$next"
     fi
-    if [[ -n "$next" && "$next" != -* ]]; then
-        return 0
-    fi
-    return 1
-}
-
-extract_argument() {
-    echo "${2:-${1#*=}}"
 }
 
 verbose_mode=false
@@ -42,43 +35,29 @@ fi
 
 while [ $# -gt 0 ]; do
     case $1 in
-        -h | --help)
-            usage
-            exit 0
-            ;;
-        -v | --verbose)
-            verbose_mode=true
-            ;;
-                -c | --chapter | --chapter=*)
-                        if ! has_argument "$1" "$2"; then
-                            echo "chapter number is required." >&2
-                            usage
-                            exit 1
-                        fi
-                        number=$(extract_argument "$1" "$2")
-                        chapter="--chapter $number"
-                        # If we consumed a separate argument (no =), shift an extra time
-                        if [[ "$1" != *=* && "$1" != *"="* && "$1" != *"=" ]]; then
-                            if [[ "$1" != *=* && "$1" != *"="* && -n "$2" && "$2" != -* ]]; then shift; fi
-                        fi
-                        ;;
-                -s | --stage | --stage=*)
-                        if ! has_argument "$1" "$2"; then
-                            echo "stage name is required." >&2
-                            usage
-                            exit 1
-                        fi
-                        name=$(extract_argument "$1" "$2")
-                        stage="--stage $name"
-                        if [[ "$1" != *=* && -n "$2" && "$2" != -* ]]; then shift; fi
-                        ;;
+        -h|--help)
+            usage; exit 0 ;;
+        -v|--verbose)
+            verbose_mode=true; shift; continue ;;
+        -c|--chapter)
+            if [[ -z "$2" || "$2" == -* ]]; then
+                echo "chapter number is required." >&2; usage; exit 1
+            fi
+            chapter="--chapter $2"; shift 2; continue ;;
+        --chapter=*)
+            number="${1#*=}"; if [[ -z "$number" ]]; then echo "chapter number is required." >&2; usage; exit 1; fi
+            chapter="--chapter $number"; shift; continue ;;
+        -s|--stage)
+            if [[ -z "$2" || "$2" == -* ]]; then
+                echo "stage name is required." >&2; usage; exit 1
+            fi
+            stage="--stage $2"; shift 2; continue ;;
+        --stage=*)
+            name="${1#*=}"; if [[ -z "$name" ]]; then echo "stage name is required." >&2; usage; exit 1; fi
+            stage="--stage $name"; shift; continue ;;
         *)
-            echo "Invalid option: $1" >&2
-            usage
-            exit 1
-            ;;
+            echo "Invalid option: $1" >&2; usage; exit 1 ;;
     esac
-    shift
 done
 
 if [[ -z $chapter ]]; then
