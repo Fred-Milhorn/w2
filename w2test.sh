@@ -13,7 +13,16 @@ usage() {
 }
 
 has_argument() {
-    [[ ( ! -z "$2" && "$2" != -*) ]];
+    # Accept either --flag=value form or --flag value form.
+    local current="$1"
+    local next="$2"
+    if [[ "$current" == *=* ]]; then
+        return 0
+    fi
+    if [[ -n "$next" && "$next" != -* ]]; then
+        return 0
+    fi
+    return 1
 }
 
 extract_argument() {
@@ -40,26 +49,29 @@ while [ $# -gt 0 ]; do
         -v | --verbose)
             verbose_mode=true
             ;;
-        -c | --chapter*)
-            if ! has_argument $@; then
-              echo "chapter number is required." >&2
-              usage
-              exit 1
-            fi
-            number=$(extract_argument $@)
-            chapter="--chapter $number"
-            shift
-            ;;
-        -s | --stage*)
-            if ! has_argument $@; then
-              echo "chapter number is required." >&2
-              usage
-              exit 1
-            fi
-            name=$(extract_argument $@)
-            stage="--stage $name"
-            shift
-            ;;
+                -c | --chapter | --chapter=*)
+                        if ! has_argument "$1" "$2"; then
+                            echo "chapter number is required." >&2
+                            usage
+                            exit 1
+                        fi
+                        number=$(extract_argument "$1" "$2")
+                        chapter="--chapter $number"
+                        # If we consumed a separate argument (no =), shift an extra time
+                        if [[ "$1" != *=* && "$1" != *"="* && "$1" != *"=" ]]; then
+                            if [[ "$1" != *=* && "$1" != *"="* && -n "$2" && "$2" != -* ]]; then shift; fi
+                        fi
+                        ;;
+                -s | --stage | --stage=*)
+                        if ! has_argument "$1" "$2"; then
+                            echo "stage name is required." >&2
+                            usage
+                            exit 1
+                        fi
+                        name=$(extract_argument "$1" "$2")
+                        stage="--stage $name"
+                        if [[ "$1" != *=* && -n "$2" && "$2" != -* ]]; then shift; fi
+                        ;;
         *)
             echo "Invalid option: $1" >&2
             usage
