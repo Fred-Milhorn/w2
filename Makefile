@@ -1,22 +1,33 @@
+## Makefile for w2: convenience wrappers around cargo & test harness
 
-return_22: return_22.s
-	gcc $< -o $@
+.PHONY: all build check release test clean run
 
-return_22.i: return_22.c
-	gcc -E -P return_22.c -o return_22.i
+all: build
 
-return_22.s: return_22.i
-	gcc -S -O -fno-asynchronous-unwind-tables -fcf-protection=none return_22.i
+build:
+	cargo build
 
-return_2: return_2.s
-	gcc $< -o $@
+check:
+	cargo check
 
-return_2.i: return_2.c
-	gcc -E -P return_2.c -o return_2.i
+release:
+	cargo build --release
 
-return_2.s: return_2.i
-	gcc -S -O -fno-asynchronous-unwind-tables -fcf-protection=none return_2.i
+# Usage: make test CHAPTER=10 [STAGE=parse]
+test:
+	@if [ -z "$$CHAPTER" ]; then \
+		echo "CHAPTER is required (e.g. make test CHAPTER=10)" >&2; \
+		exit 1; \
+	fi; \
+	CHAPTER=$$CHAPTER STAGE=$$STAGE ./w2test.sh
+
+# Quick run of the compiler on a file: make run FILE=examples/foo.c ARGS="--debug --parse"
+run:
+	@if [ -z "$$FILE" ]; then \
+		echo "FILE is required (e.g. make run FILE=tests/chapter_1/return_2.c)" >&2; \
+		exit 1; \
+	fi; \
+	cargo build >/dev/null && target/debug/w2 $$ARGS $$FILE
 
 clean:
-	rm -f return_2.i return_2.s return_2
-	rm -f return_22.i return_22.s return_22
+	cargo clean
