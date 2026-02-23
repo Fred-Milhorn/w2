@@ -287,22 +287,19 @@ mod tests {
     fn lexes_keywords_constants_and_compound_operators() {
         let tokens = lex("static long x = 42L; x >>= 1;").expect("lex should succeed");
 
-        assert_eq!(
-            tokens,
-            vec![
-                Token::Static,
-                Token::Long,
-                Token::Identifier("x".to_string()),
-                Token::Assignment,
-                Token::LConstant("42".to_string()),
-                Token::Semicolon,
-                Token::Identifier("x".to_string()),
-                Token::RightshiftAssign,
-                Token::Constant("1".to_string()),
-                Token::Semicolon,
-                Token::Eot
-            ]
-        );
+        assert_eq!(tokens, vec![
+            Token::Static,
+            Token::Long,
+            Token::Identifier("x".to_string()),
+            Token::Assignment,
+            Token::LConstant("42".to_string()),
+            Token::Semicolon,
+            Token::Identifier("x".to_string()),
+            Token::RightshiftAssign,
+            Token::Constant("1".to_string()),
+            Token::Semicolon,
+            Token::Eot
+        ]);
     }
 
     #[test]

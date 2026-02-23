@@ -738,15 +738,15 @@ mod tests {
                     }
                     panic!("expected function body to include a return statement");
                 },
-                _ => panic!("expected a function declaration with a body"),
-            },
+                _ => panic!("expected a function declaration with a body")
+            }
         }
     }
 
     fn assert_int_constant(expression: &Expression, value: i64) {
         match expression {
             Expression::Constant(Const::ConstInt(actual), Type::Int) => assert_eq!(*actual, value),
-            _ => panic!("expected int constant {value}, got {expression:?}"),
+            _ => panic!("expected int constant {value}, got {expression:?}")
         }
     }
 
@@ -759,14 +759,19 @@ mod tests {
             Expression::Binary(BinaryOperator::Plus, left, right, Type::None) => {
                 assert_int_constant(left, 1);
                 match right.as_ref() {
-                    Expression::Binary(BinaryOperator::Multiply, inner_left, inner_right, Type::None) => {
+                    Expression::Binary(
+                        BinaryOperator::Multiply,
+                        inner_left,
+                        inner_right,
+                        Type::None
+                    ) => {
                         assert_int_constant(inner_left, 2);
                         assert_int_constant(inner_right, 3);
                     },
-                    _ => panic!("expected multiply on right side, got {right:?}"),
+                    _ => panic!("expected multiply on right side, got {right:?}")
                 }
             },
-            _ => panic!("expected top-level plus expression, got {expression:?}"),
+            _ => panic!("expected top-level plus expression, got {expression:?}")
         }
     }
 
@@ -779,21 +784,21 @@ mod tests {
             Expression::Assignment(outer_lhs, outer_rhs, Type::None) => {
                 match outer_lhs.as_ref() {
                     Expression::Var(name, Type::None) => assert_eq!(name, "a"),
-                    _ => panic!("expected outer lhs var a, got {outer_lhs:?}"),
+                    _ => panic!("expected outer lhs var a, got {outer_lhs:?}")
                 }
 
                 match outer_rhs.as_ref() {
                     Expression::Assignment(inner_lhs, inner_rhs, Type::None) => {
                         match inner_lhs.as_ref() {
                             Expression::Var(name, Type::None) => assert_eq!(name, "b"),
-                            _ => panic!("expected inner lhs var b, got {inner_lhs:?}"),
+                            _ => panic!("expected inner lhs var b, got {inner_lhs:?}")
                         }
                         assert_int_constant(inner_rhs, 1);
                     },
-                    _ => panic!("expected nested assignment on rhs, got {outer_rhs:?}"),
+                    _ => panic!("expected nested assignment on rhs, got {outer_rhs:?}")
                 }
             },
-            _ => panic!("expected assignment expression, got {expression:?}"),
+            _ => panic!("expected assignment expression, got {expression:?}")
         }
     }
 
@@ -808,7 +813,7 @@ mod tests {
                 assert_int_constant(then_branch, 2);
                 assert_int_constant(else_branch, 3);
             },
-            _ => panic!("expected conditional expression, got {expression:?}"),
+            _ => panic!("expected conditional expression, got {expression:?}")
         }
     }
 }

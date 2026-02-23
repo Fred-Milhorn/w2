@@ -838,8 +838,7 @@ fn typecheck_local_variable(declaration: &VariableDeclaration) -> Result<Variabl
                 symbol_type: var_type.clone(),
                 attrs:       IdentAttrs::Local
             });
-            let new_init =
-                init.as_ref().map(typecheck_expression).transpose()?;
+            let new_init = init.as_ref().map(typecheck_expression).transpose()?;
 
             VariableDeclaration(name.clone(), new_init, var_type.clone(), opt_storage_class.clone())
         }

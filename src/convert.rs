@@ -99,7 +99,7 @@ mod tests {
 
         match converted {
             Expression::Cast(Type::Long, inner, Type::Long) => assert_eq!(*inner, expression),
-            _ => panic!("expected cast to long"),
+            _ => panic!("expected cast to long")
         }
     }
 
