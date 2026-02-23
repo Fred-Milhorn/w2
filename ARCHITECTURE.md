@@ -264,6 +264,8 @@ Flag processing sets boolean stage gates. For each input file:
 
 ---
 ## 17. Testing Harness
+- Upstream chapter tests live in the `writing-a-c-compiler-tests` git submodule.
+- Setup/update helpers are in `Makefile`: `make test-init`, `make test-update`, `make test-status`.
 - Script: `w2test.sh` wraps upstream `writing-a-c-compiler-tests/test_compiler` runner.
 - Environment variables: `CHAPTER` (required), `STAGE` (optional). Harness invokes built `target/debug/w2` with appropriate stage flag.
 - Stage names correlate to CLI flags (minus leading dashes).
@@ -278,7 +280,7 @@ When adding a new language feature/operator:
 5. TAC Generation: lower new AST constructs; introduce new instruction forms if necessary (keep them simple, three‑address style where possible).
 6. Assembly Lowering: map new TAC instructions → assembly; update fixups if new invalid patterns arise.
 7. Tests: add chapter / stage tests mirroring upstream style.
-8. Docs: update `copilot-instructions.md` + this architecture doc if semantics changed.
+8. Docs: update `AGENTS.md` + this architecture doc if semantics changed.
 
 For new data types (e.g., pointers):
 - Expand `Type` enum

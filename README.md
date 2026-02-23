@@ -15,9 +15,14 @@ Target platform: macOS x86-64 (Mach-O syntax, underscore-prefixed symbols). On A
 ## Installation
 This project does not publish binary releases. Clone the repository and build locally:
 ```bash
-git clone https://github.com/Fred-Milhorn/w2.git
+git clone --recurse-submodules https://github.com/Fred-Milhorn/w2.git
 cd w2
 cargo build
+```
+
+If you already cloned without submodules, initialize them with:
+```bash
+make test-init
 ```
 
 ## Build
@@ -62,7 +67,19 @@ Notes:
 - Without `--compile`, the driver assembles/links the emitted `.s` using `gcc`.
 
 ## Tests
-This repo vendors the test harness from “writing-a-c-compiler-tests”. Use the helper script `w2test.sh` from the project root.
+This repo includes the upstream “writing-a-c-compiler-tests” harness as a git submodule.
+
+Initialize it (or re-sync nested submodules) with:
+```bash
+make test-init
+```
+
+To pull the latest upstream harness while developing:
+```bash
+make test-update
+```
+
+Run chapter tests with the helper script `w2test.sh` from the project root.
 
 Environment variables:
 - `CHAPTER` (required): numeric chapter directory to run (e.g., `10`)
@@ -83,10 +100,15 @@ CHAPTER=10 STAGE=parse ./w2test.sh
 
 The script invokes `writing-a-c-compiler-tests/test_compiler` with the built binary at `target/debug/w2`.
 
+For compiler-internal checks (non-chapter tests), run:
+```bash
+cargo test
+```
+
 ## Contributing & code style
 - Edition: Rust 2024. Formatting is enforced via `rustfmt.toml` (max width 100, compressed params, no trailing commas, etc.).
 - Errors: use `anyhow::{Result, bail, anyhow}` and `?` for propagation.
-- Architecture and extension guidelines are documented in `.github/copilot-instructions.md`.
+- Architecture and extension guidelines are documented in `AGENTS.md`.
 
 ## Troubleshooting
 - `gcc: command not found` / preprocessing fails: Install Xcode Command Line Tools.

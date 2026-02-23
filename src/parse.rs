@@ -713,3 +713,102 @@ fn parse_factor(tokens: &mut TokenStream) -> Result<Expression> {
 
     Ok(expression)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        Ast, BinaryOperator, BlockItem, Const, Declaration, Expression, FunctionDeclaration,
+        Statement, Type, parse
+    };
+    use crate::lex::lex;
+
+    fn parse_source(source: &str) -> Ast {
+        let tokens = lex(source).expect("lex should succeed");
+        parse(&tokens).expect("parse should succeed")
+    }
+
+    fn first_return_expression(ast: &Ast) -> &Expression {
+        match ast {
+            Ast::Program(declarations) => match declarations.first() {
+                Some(Declaration::FunDecl(FunctionDeclaration(_, _, Some(body), _, _))) => {
+                    for item in body {
+                        if let BlockItem::S(Statement::Return(expression)) = item {
+                            return expression;
+                        }
+                    }
+                    panic!("expected function body to include a return statement");
+                },
+                _ => panic!("expected a function declaration with a body"),
+            },
+        }
+    }
+
+    fn assert_int_constant(expression: &Expression, value: i64) {
+        match expression {
+            Expression::Constant(Const::ConstInt(actual), Type::Int) => assert_eq!(*actual, value),
+            _ => panic!("expected int constant {value}, got {expression:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_binary_precedence() {
+        let ast = parse_source("int main(void) { return 1 + 2 * 3; }");
+        let expression = first_return_expression(&ast);
+
+        match expression {
+            Expression::Binary(BinaryOperator::Plus, left, right, Type::None) => {
+                assert_int_constant(left, 1);
+                match right.as_ref() {
+                    Expression::Binary(BinaryOperator::Multiply, inner_left, inner_right, Type::None) => {
+                        assert_int_constant(inner_left, 2);
+                        assert_int_constant(inner_right, 3);
+                    },
+                    _ => panic!("expected multiply on right side, got {right:?}"),
+                }
+            },
+            _ => panic!("expected top-level plus expression, got {expression:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_assignment_as_right_associative() {
+        let ast = parse_source("int main(void) { int a; int b; return a = b = 1; }");
+        let expression = first_return_expression(&ast);
+
+        match expression {
+            Expression::Assignment(outer_lhs, outer_rhs, Type::None) => {
+                match outer_lhs.as_ref() {
+                    Expression::Var(name, Type::None) => assert_eq!(name, "a"),
+                    _ => panic!("expected outer lhs var a, got {outer_lhs:?}"),
+                }
+
+                match outer_rhs.as_ref() {
+                    Expression::Assignment(inner_lhs, inner_rhs, Type::None) => {
+                        match inner_lhs.as_ref() {
+                            Expression::Var(name, Type::None) => assert_eq!(name, "b"),
+                            _ => panic!("expected inner lhs var b, got {inner_lhs:?}"),
+                        }
+                        assert_int_constant(inner_rhs, 1);
+                    },
+                    _ => panic!("expected nested assignment on rhs, got {outer_rhs:?}"),
+                }
+            },
+            _ => panic!("expected assignment expression, got {expression:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_conditional_expression() {
+        let ast = parse_source("int main(void) { return 1 ? 2 : 3; }");
+        let expression = first_return_expression(&ast);
+
+        match expression {
+            Expression::Conditional(condition, then_branch, else_branch, Type::None) => {
+                assert_int_constant(condition, 1);
+                assert_int_constant(then_branch, 2);
+                assert_int_constant(else_branch, 3);
+            },
+            _ => panic!("expected conditional expression, got {expression:?}"),
+        }
+    }
+}

@@ -6,12 +6,12 @@
 
 # Unignore all dirs
 !*/
+!/writing-a-c-compiler-tests
 
 /cprogs
 .DS_Store
 !Makefile
 /target
-/writing-a-c-compiler-tests
 
 *.c
 *.i

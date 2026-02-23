@@ -278,3 +278,44 @@ pub fn lex(input: &str) -> Result<TokenList> {
 
     Ok(tokens)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{Token, lex};
+
+    #[test]
+    fn lexes_keywords_constants_and_compound_operators() {
+        let tokens = lex("static long x = 42L; x >>= 1;").expect("lex should succeed");
+
+        assert_eq!(
+            tokens,
+            vec![
+                Token::Static,
+                Token::Long,
+                Token::Identifier("x".to_string()),
+                Token::Assignment,
+                Token::LConstant("42".to_string()),
+                Token::Semicolon,
+                Token::Identifier("x".to_string()),
+                Token::RightshiftAssign,
+                Token::Constant("1".to_string()),
+                Token::Semicolon,
+                Token::Eot
+            ]
+        );
+    }
+
+    #[test]
+    fn reports_invalid_input() {
+        let err = lex("@").expect_err("invalid token should fail lexing");
+        assert!(err.to_string().contains("No tokens found"));
+    }
+
+    #[test]
+    fn operator_metadata_is_consistent() {
+        assert!(Token::Multiply.precedence() > Token::Plus.precedence());
+        assert!(Token::PlusAssign.is_compound_assignment());
+        assert!(Token::QuestionMark.is_binary_operator());
+        assert!(!Token::Semicolon.is_binary_operator());
+    }
+}

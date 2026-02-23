@@ -1,6 +1,6 @@
 ## Makefile for w2: convenience wrappers around cargo & test harness
 
-.PHONY: all build check release test clean run
+.PHONY: all build check release test test-init test-update test-status clean run
 
 all: build
 
@@ -12,6 +12,18 @@ check:
 
 release:
 	cargo build --release
+
+# Initialize chapter-test submodule(s)
+test-init:
+	git submodule update --init --recursive writing-a-c-compiler-tests
+
+# Pull latest upstream chapter tests and update submodule pointer
+test-update:
+	git submodule update --remote --merge writing-a-c-compiler-tests
+
+# Show current pinned submodule commit
+test-status:
+	git submodule status --recursive writing-a-c-compiler-tests
 
 # Usage: make test CHAPTER=10 [STAGE=parse]
 test:

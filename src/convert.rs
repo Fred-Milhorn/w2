@@ -72,3 +72,47 @@ pub fn val_type(value: &Val) -> Result<AssemblyType> {
 
     Ok(atype)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{convert_static_init, convert_to, get_common_type};
+    use crate::parse::{Const, Expression, Type};
+    use crate::validate::{InitialValue, StaticInit};
+
+    #[test]
+    fn common_type_prefers_long_when_types_differ() {
+        assert_eq!(get_common_type(Type::Int, Type::Int), Type::Int);
+        assert_eq!(get_common_type(Type::Int, Type::Long), Type::Long);
+    }
+
+    #[test]
+    fn convert_to_is_noop_for_matching_type() {
+        let expression = Expression::Constant(Const::ConstInt(7), Type::Int);
+        let converted = convert_to(expression.clone(), Type::Int);
+        assert_eq!(converted, expression);
+    }
+
+    #[test]
+    fn convert_to_wraps_expression_when_type_changes() {
+        let expression = Expression::Constant(Const::ConstInt(1), Type::Int);
+        let converted = convert_to(expression.clone(), Type::Long);
+
+        match converted {
+            Expression::Cast(Type::Long, inner, Type::Long) => assert_eq!(*inner, expression),
+            _ => panic!("expected cast to long"),
+        }
+    }
+
+    #[test]
+    fn convert_static_init_defaults_to_zero() {
+        let initial = convert_static_init("x", &Type::Long, &None).expect("expected success");
+        assert_eq!(initial, InitialValue::Initial(StaticInit::LongInit(0)));
+    }
+
+    #[test]
+    fn convert_static_init_rejects_non_constant_initializer() {
+        let init = Some(Expression::Var("x".to_string(), Type::Int));
+        let err = convert_static_init("x", &Type::Int, &init).expect_err("expected failure");
+        assert!(err.to_string().contains("Non-constant initializer"));
+    }
+}

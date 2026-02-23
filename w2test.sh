@@ -1,6 +1,10 @@
 #!/bin/bash
 
-W2ROOT="$(pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+W2ROOT="${SCRIPT_DIR}"
+W2BIN="${W2ROOT}/target/debug/w2"
+HARNESS_DIR="${W2ROOT}/writing-a-c-compiler-tests"
+HARNESS="${HARNESS_DIR}/test_compiler"
 
 # Function to display script usage
 usage() {
@@ -12,28 +16,11 @@ usage() {
     echo " -s, --stage     Compiler stage we're testing"
 }
 
-extract_argument_pair() {
-    # $1 = current token, $2 = next token
-    local current="$1"; local next="$2"
-    if [[ "$current" == *=* ]]; then
-        echo "${current#*=}"
-    else
-        echo "$next"
-    fi
-}
-
 verbose_mode=false
-chapter=""
-stage=""
+chapter="${CHAPTER:-}"
+stage="${STAGE:-}"
 
-if [[ ! -z $STAGE ]]; then
-    stage="--stage $STAGE"
-fi
-if [[ ! -z $CHAPTER ]]; then
-    chapter="--chapter $CHAPTER"
-fi
-
-while [ $# -gt 0 ]; do
+while [[ $# -gt 0 ]]; do
     case $1 in
         -h|--help)
             usage; exit 0 ;;
@@ -43,29 +30,53 @@ while [ $# -gt 0 ]; do
             if [[ -z "$2" || "$2" == -* ]]; then
                 echo "chapter number is required." >&2; usage; exit 1
             fi
-            chapter="--chapter $2"; shift 2; continue ;;
+            chapter="$2"; shift 2; continue ;;
         --chapter=*)
             number="${1#*=}"; if [[ -z "$number" ]]; then echo "chapter number is required." >&2; usage; exit 1; fi
-            chapter="--chapter $number"; shift; continue ;;
+            chapter="$number"; shift; continue ;;
         -s|--stage)
             if [[ -z "$2" || "$2" == -* ]]; then
                 echo "stage name is required." >&2; usage; exit 1
             fi
-            stage="--stage $2"; shift 2; continue ;;
+            stage="$2"; shift 2; continue ;;
         --stage=*)
             name="${1#*=}"; if [[ -z "$name" ]]; then echo "stage name is required." >&2; usage; exit 1; fi
-            stage="--stage $name"; shift; continue ;;
+            stage="$name"; shift; continue ;;
         *)
             echo "Invalid option: $1" >&2; usage; exit 1 ;;
     esac
 done
 
-if [[ -z $chapter ]]; then
+if [[ -z "$chapter" ]]; then
     echo "Chapter is required." >&2
     usage
     exit 1
 fi
 
-cd writing-a-c-compiler-tests
+if [[ ! -x "$W2BIN" ]]; then
+    echo "Compiler binary not found at '$W2BIN'." >&2
+    echo "Build it first with: cargo build" >&2
+    exit 1
+fi
+
+if [[ ! -d "$HARNESS_DIR" ]]; then
+    echo "Missing test harness directory '$HARNESS_DIR'." >&2
+    echo "Initialize submodules first: make test-init" >&2
+    exit 1
+fi
+
+if [[ ! -x "$HARNESS" ]]; then
+    echo "Missing test harness runner '$HARNESS'." >&2
+    echo "Initialize or update submodules: make test-init" >&2
+    exit 1
+fi
+
+cd "$HARNESS_DIR"
 if [[ $verbose_mode == true ]]; then set -x; fi
-./test_compiler "${W2ROOT}/target/debug/w2" $chapter $stage
+
+args=(./test_compiler "$W2BIN" --chapter "$chapter")
+if [[ -n "$stage" ]]; then
+    args+=(--stage "$stage")
+fi
+
+"${args[@]}"
