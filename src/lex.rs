@@ -59,6 +59,7 @@ pub enum Token {
     For,
     Break,
     Continue,
+    Goto,
     Comma,
     Static,
     Extern
@@ -193,6 +194,7 @@ pub fn lex(input: &str) -> Result<TokenList> {
                     "for"      => Token::For,
                     "break"    => Token::Break,
                     "continue" => Token::Continue,
+                    "goto"     => Token::Goto,
                     "static"   => Token::Static,
                     "extern"   => Token::Extern,
                     name => Token::Identifier(name.to_string()),

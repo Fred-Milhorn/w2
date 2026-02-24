@@ -200,6 +200,13 @@ fn emit_statement(statement: &Statement, instructions: &mut Instructions) -> Res
         Statement::Compound(block) => {
             emit_block(block, instructions)?;
         },
+        Statement::Goto(target) => {
+            instructions.push(Instruction::Jump(target.clone()));
+        },
+        Statement::Labeled(label, statement) => {
+            instructions.push(Instruction::Label(label.clone()));
+            emit_statement(statement, instructions)?;
+        },
         Statement::Break(label) => {
             instructions.push(Instruction::Jump(mklabel("break", label)));
         },

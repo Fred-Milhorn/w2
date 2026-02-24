@@ -10,7 +10,9 @@ struct TestOptions {
     stage:     Option<String>,
     failfast:  bool,
     backtrace: bool,
-    verbose:   bool
+    verbose:   bool,
+    goto:      bool,
+    switch:    bool
 }
 
 fn print_help() {
@@ -34,6 +36,8 @@ fn print_test_help() {
            -v, --verbose    Enable verbose mode for harness output\n\
            -f, --failfast   Stop on first test failure\n\
            -b, --backtrace  Force RUST_BACKTRACE=1 while running harness\n\
+           --goto            Include tests for goto and labeled statements\n\
+           --switch          Include tests for switch statements\n\
            -c, --chapter N  Chapter to run (or CHAPTER env var)\n\
            -s, --stage S    Stage to run (or STAGE env var)"
     );
@@ -94,6 +98,14 @@ fn parse_test_args(raw_args: &[String]) -> TaskResult<(TestOptions, bool)> {
                 opts.backtrace = true;
                 ix += 1;
             },
+            "--goto" => {
+                opts.goto = true;
+                ix += 1;
+            },
+            "--switch" => {
+                opts.switch = true;
+                ix += 1;
+            },
             "-c" | "--chapter" => {
                 if ix + 1 >= raw_args.len() || raw_args[ix + 1].starts_with('-') {
                     return Err("chapter number is required".to_string());
@@ -141,6 +153,12 @@ fn parse_test_args(raw_args: &[String]) -> TaskResult<(TestOptions, bool)> {
     }
     if !opts.backtrace {
         opts.backtrace = truthy_env("RUST_BACKTRACE");
+    }
+    if !opts.goto {
+        opts.goto = truthy_env("GOTO");
+    }
+    if !opts.switch {
+        opts.switch = truthy_env("SWITCH");
     }
 
     Ok((opts, help_requested))
@@ -191,6 +209,12 @@ fn run_test(raw_args: &[String]) -> TaskResult<i32> {
     }
     if opts.verbose {
         command.arg("--verbose");
+    }
+    if opts.goto {
+        command.arg("--goto");
+    }
+    if opts.switch {
+        command.arg("--switch");
     }
     if opts.backtrace {
         command.env("RUST_BACKTRACE", "1");

@@ -120,6 +120,8 @@ pub enum Statement {
     Compound(Block),
     Break(Label),
     Continue(Label),
+    Goto(Identifier),
+    Labeled(Identifier, Box<Statement>),
     While(Expression, Box<Statement>, Label),
     DoWhile(Box<Statement>, Expression, Label),
     For(ForInit, Option<Expression>, Option<Expression>, Box<Statement>, Label),
@@ -217,6 +219,11 @@ impl TokenStream<'_> {
         }
 
         Ok(token)
+    }
+
+    fn peek_nth(&self, index: usize) -> Option<Token> {
+        let mut iter = self.0.clone();
+        iter.nth(index).cloned()
     }
 }
 
@@ -462,7 +469,27 @@ fn parse_if(tokens: &mut TokenStream) -> Result<Statement> {
     Ok(Statement::If(condition, then_statement, else_statement))
 }
 
+fn parse_goto(tokens: &mut TokenStream) -> Result<Statement> {
+    tokens.expect(Token::Goto)?;
+    let label = match tokens.next()? {
+        Token::Identifier(name) => name.to_string(),
+        token => bail!("parse_goto: Expected label name, got '{token:?}'")
+    };
+    tokens.expect(Token::Semicolon)?;
+    Ok(Statement::Goto(label))
+}
+
 fn parse_statement(tokens: &mut TokenStream) -> Result<Statement> {
+    if matches!(tokens.peek_nth(1), Some(Token::Colon))
+        && let Token::Identifier(name) = tokens.peek()?
+    {
+        let label_name = name.clone();
+        tokens.next()?;
+        tokens.expect(Token::Colon)?;
+        let statement = parse_statement(tokens)?;
+        return Ok(Statement::Labeled(label_name, Box::new(statement)));
+    }
+
     let statement = match tokens.peek()? {
         Token::OpenBrace => Statement::Compound(parse_block(tokens)?),
         Token::Break => {
@@ -475,6 +502,7 @@ fn parse_statement(tokens: &mut TokenStream) -> Result<Statement> {
             tokens.expect(Token::Semicolon)?;
             Statement::Continue(temp_name("continue"))
         },
+        Token::Goto => parse_goto(tokens)?,
         Token::While => {
             tokens.expect(Token::While)?;
             tokens.expect(Token::OpenParen)?;
@@ -851,6 +879,46 @@ mod tests {
                 _ => panic!("expected unary-not over subtraction, got {inner:?}")
             },
             _ => panic!("expected unary-not expression, got {expression:?}")
+        }
+    }
+
+    #[test]
+    fn parses_goto_statement() {
+        let ast = parse_source("int main(void) { goto done; done: return 0; }");
+        match ast {
+            Ast::Program(declarations) => match declarations.first() {
+                Some(Declaration::FunDecl(FunctionDeclaration(_, _, Some(body), _, _))) => {
+                    assert!(matches!(
+                        body.first(),
+                        Some(BlockItem::S(Statement::Goto(label))) if label == "done"
+                    ));
+                    assert!(matches!(
+                        body.get(1),
+                        Some(BlockItem::S(Statement::Labeled(label, _))) if label == "done"
+                    ));
+                },
+                _ => panic!("expected function declaration with body")
+            }
+        }
+    }
+
+    #[test]
+    fn parses_labeled_if_statement() {
+        let ast = parse_source("int main(void) { start: if (1) return 2; return 0; }");
+        match ast {
+            Ast::Program(declarations) => match declarations.first() {
+                Some(Declaration::FunDecl(FunctionDeclaration(_, _, Some(body), _, _))) => {
+                    match body.first() {
+                        Some(BlockItem::S(Statement::Labeled(label, statement)))
+                            if label == "start" =>
+                        {
+                            assert!(matches!(statement.as_ref(), Statement::If(_, _, _)));
+                        },
+                        _ => panic!("expected labeled if statement")
+                    }
+                },
+                _ => panic!("expected function declaration with body")
+            }
         }
     }
 }

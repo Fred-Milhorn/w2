@@ -6,7 +6,7 @@ These instructions help coding agents produce code and edits that match this rep
 - Purpose: A tiny C compiler targeting x86-64 macOS, inspired by Nora Sandler's "Writing a C Compiler".
 - Pipeline: preprocess C -> lex -> parse -> validate -> generate TAC (tacky) -> generate x86-64 asm -> assemble/link with gcc.
 - Entry point: `src/main.rs` with flags to stop after stages: `--lex`, `--parse`, `--validate`, `--tacky`, `--codegen`, `--emitcode`, `--compile`. `--debug` prints stage artifacts.
-- Supported C subset: ints/longs, unary/binary ops, conditionals, loops (`while`, `do-while`, `for`), `break`/`continue`, functions, file-scope and block-scope variables, `static`/`extern` storage.
+- Supported C subset: ints/longs, unary/binary ops, conditionals, loops (`while`, `do-while`, `for`), `break`/`continue`, `goto` and labeled statements, functions, file-scope and block-scope variables, `static`/`extern` storage.
 
 ## Modules and responsibilities
 - `lex.rs`: Converts source into tokens (see `Token` enum and regexes). Keep regexes anchored at start; whitespace consumed per-loop.
@@ -41,7 +41,7 @@ When extending the language or backend, keep these guardrails:
 ## Runtime and tests
 - Build: `cargo build`.
 - Run compiler: `target/debug/w2 [--debug] [--lex|--parse|--validate|--tacky|--codegen|--emitcode|--compile] file.c`.
-- Chapter tests: initialize the chapter-test submodule with `cargo xtask test-init`, then run tests via `cargo xtask test --chapter <n> [--stage <stage>] [--failfast] [--backtrace]`.
+- Chapter tests: initialize the chapter-test submodule with `cargo xtask test-init`, then run tests via `cargo xtask test --chapter <n> [--stage <stage>] [--failfast] [--backtrace] [--goto] [--switch]`.
 - Fast internal tests: `cargo test`.
 - Test layering: prefer adding internal unit tests for parser/validator/codegen behavior and use chapter tests as end-to-end coverage.
 

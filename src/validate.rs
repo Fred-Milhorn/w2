@@ -195,10 +195,10 @@ pub fn validate(mut ast: Ast) -> Result<Ast> {
         }
     }
 
-    // Label all the loops, breaks, continues
+    // Label control-flow targets (loop labels and goto labels)
     for declaration in declarations.iter_mut() {
         if let Declaration::FunDecl(function_declaration) = declaration {
-            *declaration = Declaration::FunDecl(label_loops(function_declaration, &None)?);
+            *declaration = Declaration::FunDecl(label_control_flow(function_declaration)?);
         }
     }
 
@@ -354,6 +354,11 @@ fn resolve_statement(statement: &Statement, ident_map: &IdentMap) -> Result<Stat
             let mut new_ident_map = ident_map.duplicate();
             Statement::Compound(resolve_block(block, &mut new_ident_map)?)
         },
+        Statement::Goto(_) => statement.clone(),
+        Statement::Labeled(label, statement) => {
+            let resolved = resolve_statement(statement, ident_map)?;
+            Statement::Labeled(label.clone(), Box::new(resolved))
+        },
         Statement::Break(_) => statement.clone(),
         Statement::Continue(_) => statement.clone(),
         Statement::While(condition, body, label) => {
@@ -479,38 +484,96 @@ fn resolve_expression(expression: &Expression, ident_map: &IdentMap) -> Result<E
     Ok(new_expression)
 }
 
-fn label_statement(statement: &Statement, label: &Option<Label>) -> Result<Statement> {
+fn collect_statement_labels(
+    statement: &Statement, labels: &mut HashMap<Identifier, Identifier>
+) -> Result<()> {
+    match statement {
+        Statement::If(_, then_part, else_part) => {
+            collect_statement_labels(then_part, labels)?;
+            if let Some(else_statement) = else_part {
+                collect_statement_labels(else_statement, labels)?;
+            }
+        },
+        Statement::Compound(block) => collect_block_labels(block, labels)?,
+        Statement::Labeled(name, statement) => {
+            if labels.contains_key(name) {
+                bail!("duplicate label: '{name}'");
+            }
+            labels.insert(name.clone(), temp_name("label"));
+            collect_statement_labels(statement, labels)?;
+        },
+        Statement::While(_, body, _) => collect_statement_labels(body, labels)?,
+        Statement::DoWhile(body, _, _) => collect_statement_labels(body, labels)?,
+        Statement::For(_, _, _, body, _) => collect_statement_labels(body, labels)?,
+        _ => ()
+    }
+
+    Ok(())
+}
+
+fn collect_block_labels(block: &Block, labels: &mut HashMap<Identifier, Identifier>) -> Result<()> {
+    for item in block {
+        if let BlockItem::S(statement) = item {
+            collect_statement_labels(statement, labels)?;
+        }
+    }
+
+    Ok(())
+}
+
+fn label_statement(
+    statement: &Statement, loop_label: &Option<Label>, label_map: &HashMap<Identifier, Identifier>
+) -> Result<Statement> {
     let labeled_statement = match statement {
         Statement::If(condition, then_part, else_part) => {
-            let labeled_then = Box::new(label_statement(then_part, label)?);
+            let labeled_then = Box::new(label_statement(then_part, loop_label, label_map)?);
             let labeled_else = match else_part {
-                Some(else_branch) => Some(Box::new(label_statement(else_branch, label)?)),
+                Some(else_branch) => {
+                    Some(Box::new(label_statement(else_branch, loop_label, label_map)?))
+                },
                 None => None
             };
             Statement::If(condition.clone(), labeled_then, labeled_else)
         },
-        Statement::Compound(block) => Statement::Compound(label_block(block, label)?),
-        Statement::Break(_) => match label {
+        Statement::Compound(block) => {
+            Statement::Compound(label_block(block, loop_label, label_map)?)
+        },
+        Statement::Break(_) => match loop_label {
             Some(name) => Statement::Break(name.clone()),
             None => bail!("break statement outside of loop")
         },
-        Statement::Continue(_) => match label {
+        Statement::Continue(_) => match loop_label {
             Some(name) => Statement::Continue(name.clone()),
             None => bail!("continue statement outside of loop")
         },
+        Statement::Goto(target) => {
+            let label = match label_map.get(target) {
+                Some(name) => name.clone(),
+                None => bail!("undefined label in goto: '{target}'")
+            };
+            Statement::Goto(label)
+        },
+        Statement::Labeled(name, statement) => {
+            let label = match label_map.get(name) {
+                Some(entry) => entry.clone(),
+                None => bail!("unknown label: '{name}'")
+            };
+            let labeled = label_statement(statement, loop_label, label_map)?;
+            Statement::Labeled(label, Box::new(labeled))
+        },
         Statement::While(condition, body, _) => {
             let while_label = temp_name("while");
-            let labeled_body = label_statement(body, &Some(while_label.clone()))?;
+            let labeled_body = label_statement(body, &Some(while_label.clone()), label_map)?;
             Statement::While(condition.clone(), Box::new(labeled_body), while_label)
         },
         Statement::DoWhile(body, condition, _) => {
             let do_while_label = temp_name("dowhile");
-            let labeled_body = label_statement(body, &Some(do_while_label.clone()))?;
+            let labeled_body = label_statement(body, &Some(do_while_label.clone()), label_map)?;
             Statement::DoWhile(Box::new(labeled_body), condition.clone(), do_while_label)
         },
         Statement::For(for_init, condition, post, body, _) => {
             let for_label = temp_name("for");
-            let labeled_body = label_statement(body, &Some(for_label.clone()))?;
+            let labeled_body = label_statement(body, &Some(for_label.clone()), label_map)?;
             Statement::For(
                 for_init.clone(),
                 condition.clone(),
@@ -525,7 +588,9 @@ fn label_statement(statement: &Statement, label: &Option<Label>) -> Result<State
     Ok(labeled_statement)
 }
 
-fn label_block(block: &Block, label: &Option<Label>) -> Result<Block> {
+fn label_block(
+    block: &Block, loop_label: &Option<Label>, label_map: &HashMap<Identifier, Identifier>
+) -> Result<Block> {
     let mut new_block = Vec::<BlockItem>::new();
 
     for item in block {
@@ -534,7 +599,7 @@ fn label_block(block: &Block, label: &Option<Label>) -> Result<Block> {
                 new_block.push(item.clone());
             },
             BlockItem::S(statement) => {
-                let labeled_statement = label_statement(statement, label)?;
+                let labeled_statement = label_statement(statement, loop_label, label_map)?;
                 new_block.push(BlockItem::S(labeled_statement));
             }
         }
@@ -543,13 +608,13 @@ fn label_block(block: &Block, label: &Option<Label>) -> Result<Block> {
     Ok(new_block)
 }
 
-fn label_loops(
-    declaration: &FunctionDeclaration, label: &Option<Label>
-) -> Result<FunctionDeclaration> {
+fn label_control_flow(declaration: &FunctionDeclaration) -> Result<FunctionDeclaration> {
     if let FunctionDeclaration(name, opt_params, Some(body), fun_type, opt_storage_class) =
         declaration
     {
-        let new_body = label_block(body, label)?;
+        let mut label_map: HashMap<Identifier, Identifier> = HashMap::new();
+        collect_block_labels(body, &mut label_map)?;
+        let new_body = label_block(body, &None, &label_map)?;
         return Ok(FunctionDeclaration(
             name.clone(),
             opt_params.clone(),
@@ -610,6 +675,11 @@ fn typecheck_statement(statement: &Statement, name: &str) -> Result<Statement> {
             Statement::If(new_condition, Box::new(new_then_branch), new_else_branch)
         },
         Statement::Compound(block) => Statement::Compound(typecheck_block(block, name)?),
+        Statement::Goto(_) => statement.clone(),
+        Statement::Labeled(label, statement) => {
+            let new_statement = typecheck_statement(statement, name)?;
+            Statement::Labeled(label.clone(), Box::new(new_statement))
+        },
         Statement::While(condition, statement, label) => {
             let new_condition = typecheck_expression(condition)?;
             let new_statement = typecheck_statement(statement, name)?;
@@ -978,4 +1048,65 @@ fn typecheck_function(declaration: &FunctionDeclaration) -> Result<FunctionDecla
     );
 
     Ok(new_decl)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{BACKEND, SYMBOLS, SymbolTable, validate};
+    use crate::parse::{Ast, BlockItem, Declaration, FunctionDeclaration, Statement, parse};
+
+    fn reset_tables() {
+        SYMBOLS.with_borrow_mut(|symbols| *symbols = SymbolTable::new());
+        BACKEND.with_borrow_mut(|backend| backend.0.clear());
+    }
+
+    fn parse_and_validate(source: &str) -> anyhow::Result<Ast> {
+        reset_tables();
+        let tokens = crate::lex::lex(source)?;
+        let ast = parse(&tokens)?;
+        validate(ast)
+    }
+
+    fn function_body(ast: &Ast) -> &Vec<BlockItem> {
+        match ast {
+            Ast::Program(declarations) => match declarations.first() {
+                Some(Declaration::FunDecl(FunctionDeclaration(_, _, Some(body), _, _))) => body,
+                _ => panic!("expected function declaration with body")
+            }
+        }
+    }
+
+    #[test]
+    fn rejects_duplicate_labels() {
+        let source = "int main(void) { label: return 0; label: return 1; }";
+        let err = parse_and_validate(source).expect_err("duplicate labels should be rejected");
+        assert!(err.to_string().contains("duplicate label"));
+    }
+
+    #[test]
+    fn rejects_undefined_goto_target() {
+        let source = "int main(void) { goto missing; return 0; }";
+        let err = parse_and_validate(source).expect_err("goto to missing label should fail");
+        assert!(err.to_string().contains("undefined label in goto"));
+    }
+
+    #[test]
+    fn rewrites_goto_and_label_to_same_internal_target() {
+        let source = "int main(void) { goto done; return 1; done: return 0; }";
+        let ast = parse_and_validate(source).expect("valid goto should pass");
+        let body = function_body(&ast);
+
+        let goto_target = match body.first() {
+            Some(BlockItem::S(Statement::Goto(label))) => label.clone(),
+            _ => panic!("expected goto statement as first statement")
+        };
+
+        let label_target = match body.get(2) {
+            Some(BlockItem::S(Statement::Labeled(label, _))) => label.clone(),
+            _ => panic!("expected labeled statement as third statement")
+        };
+
+        assert_eq!(goto_target, label_target);
+        assert_ne!(goto_target, "done");
+    }
 }
