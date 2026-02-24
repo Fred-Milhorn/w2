@@ -60,9 +60,10 @@ fn main() -> Result<()> {
                 "parse"    | "p" => opts.parse    = true,
                 "validate" | "v" => opts.validate = true,
                 "tacky"    | "t" => opts.tacky    = true,
-                "codegen"  | "c" => opts.codegen  = true,
+                "codegen"  | "g" => opts.codegen  = true,
                 "emitcode" | "e" => opts.emitcode = true,
-                "compile"  | "m" => opts.compile  = true,
+                // Keep gcc-compatible `-c` semantics for object-file output.
+                "compile"  | "m" | "c" => opts.compile  = true,
                 unknown => usage(&format!("Unknown option: {unknown:?}")),
             }
         } else {

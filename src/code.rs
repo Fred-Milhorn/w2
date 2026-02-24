@@ -502,6 +502,10 @@ fn tacky_to_assembly(instruction: &tacky::Instruction) -> Result<Instructions> {
 
 fn gen_assembly(function: &tacky::Function) -> Result<Function> {
     let tacky::Function(name, global, parameters, body) = function;
+    if body.is_none() {
+        return Ok(Function(name.clone(), *global, 0, None));
+    }
+
     let instructions = {
         let mut assembly: Instructions = Vec::new();
 
@@ -827,19 +831,24 @@ impl UnaryOperator {
     }
 }
 
-#[rustfmt::skip]
-impl BinaryOperator {
-    fn name(&self) -> &str {
-        match self {
-            BinaryOperator::Add        => "addl",
-            BinaryOperator::Sub        => "subl",
-            BinaryOperator::Mult       => "imull",
-            BinaryOperator::Leftshift  => "sall",
-            BinaryOperator::Rightshift => "sarl",
-            BinaryOperator::BitAnd     => "andl",
-            BinaryOperator::BitXor     => "xorl",
-            BinaryOperator::BitOr      => "orl",
-        }
+fn emit_binary_mnemonic(operator: &BinaryOperator, atype: &AssemblyType) -> &'static str {
+    match (operator, atype) {
+        (BinaryOperator::Add, AssemblyType::Longword) => "addl",
+        (BinaryOperator::Add, AssemblyType::Quadword) => "addq",
+        (BinaryOperator::Sub, AssemblyType::Longword) => "subl",
+        (BinaryOperator::Sub, AssemblyType::Quadword) => "subq",
+        (BinaryOperator::Mult, AssemblyType::Longword) => "imull",
+        (BinaryOperator::Mult, AssemblyType::Quadword) => "imulq",
+        (BinaryOperator::Leftshift, AssemblyType::Longword) => "sall",
+        (BinaryOperator::Leftshift, AssemblyType::Quadword) => "salq",
+        (BinaryOperator::Rightshift, AssemblyType::Longword) => "sarl",
+        (BinaryOperator::Rightshift, AssemblyType::Quadword) => "sarq",
+        (BinaryOperator::BitAnd, AssemblyType::Longword) => "andl",
+        (BinaryOperator::BitAnd, AssemblyType::Quadword) => "andq",
+        (BinaryOperator::BitXor, AssemblyType::Longword) => "xorl",
+        (BinaryOperator::BitXor, AssemblyType::Quadword) => "xorq",
+        (BinaryOperator::BitOr, AssemblyType::Longword) => "orl",
+        (BinaryOperator::BitOr, AssemblyType::Quadword) => "orq"
     }
 }
 
@@ -863,12 +872,20 @@ fn emit_instruction(code: &mut String, instruction: &Instruction) -> Result<()> 
         Instruction::Ret => writeln!(code, "    movq    %rbp, %rsp\n    popq    %rbp\n    ret")?,
         Instruction::Cdq(_atype) => writeln!(code, "    cdq")?,
         Instruction::Idiv(_atype, dst) => writeln!(code, "    idivl   {}", dst.r4b())?,
-        Instruction::Binary(operator, _atype, src, dst) => {
+        Instruction::Binary(operator, atype, src, dst) => {
+            let mnemonic = emit_binary_mnemonic(operator, atype);
             let src_name = match operator {
                 BinaryOperator::Leftshift | BinaryOperator::Rightshift => src.r1b(),
-                _ => src.r4b()
+                _ => match atype {
+                    AssemblyType::Longword => src.r4b(),
+                    AssemblyType::Quadword => src.r8b()
+                }
             };
-            writeln!(code, "    {}  {}, {}", operator.name(), src_name, dst.r4b())?;
+            let dst_name = match atype {
+                AssemblyType::Longword => dst.r4b(),
+                AssemblyType::Quadword => dst.r8b()
+            };
+            writeln!(code, "    {}  {}, {}", mnemonic, src_name, dst_name)?;
         },
         Instruction::Movsx(src, dst) => {
             writeln!(code, "    movslq  {}, {}", src.r4b(), dst.r8b())?;
@@ -942,8 +959,11 @@ _{name}:
 
 #[cfg(test)]
 mod tests {
+    use crate::{parse, tacky};
+
     use super::{
-        Function, Instruction, Operand, Register, emit_instruction, fixup_invalid, fixup_pseudo
+        Function, Instruction, Operand, Register, emit_instruction, fixup_invalid, fixup_pseudo,
+        gen_assembly
     };
 
     #[test]
@@ -998,5 +1018,22 @@ mod tests {
             ),
             Instruction::Movsx(Operand::Reg(Register::R10), Operand::Stack(-8))
         ]);
+    }
+
+    #[test]
+    fn forward_declaration_emits_no_function_body() {
+        let declaration_only = tacky::Function(
+            "foo".to_string(),
+            true,
+            Some(vec![
+                parse::Parameter { name: "a".to_string(), type_of: parse::Type::Int },
+                parse::Parameter { name: "b".to_string(), type_of: parse::Type::Int },
+            ]),
+            None
+        );
+
+        let assembly = gen_assembly(&declaration_only).expect("assembly generation should succeed");
+        let Function(_, _, _, body) = assembly;
+        assert!(body.is_none());
     }
 }
