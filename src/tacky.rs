@@ -170,6 +170,53 @@ fn emit_block(block: &Block, instructions: &mut Instructions) -> Result<()> {
     Ok(())
 }
 
+fn case_constant(expression: &Expression) -> Result<Const> {
+    match expression {
+        Expression::Constant(constant, _) => Ok(constant.clone()),
+        Expression::Unary(UnaryOperator::Negate, inner, _) => match case_constant(inner)? {
+            Const::ConstInt(value) => Ok(Const::ConstInt(-value)),
+            Const::ConstLong(value) => Ok(Const::ConstLong(-value))
+        },
+        _ => bail!("switch case value is not a constant expression: {expression:?}")
+    }
+}
+
+fn collect_switch_targets(
+    statement: &Statement, cases: &mut Vec<(Const, Identifier)>, default: &mut Option<Identifier>
+) -> Result<()> {
+    match statement {
+        Statement::Switch(_, _, _) => (),
+        Statement::Case(expression, body, label) => {
+            cases.push((case_constant(expression)?, label.clone()));
+            collect_switch_targets(body, cases, default)?;
+        },
+        Statement::Default(body, label) => {
+            *default = Some(label.clone());
+            collect_switch_targets(body, cases, default)?;
+        },
+        Statement::If(_, then_branch, else_branch) => {
+            collect_switch_targets(then_branch, cases, default)?;
+            if let Some(else_statement) = else_branch {
+                collect_switch_targets(else_statement, cases, default)?;
+            }
+        },
+        Statement::Compound(block) => {
+            for item in block {
+                if let BlockItem::S(statement) = item {
+                    collect_switch_targets(statement, cases, default)?;
+                }
+            }
+        },
+        Statement::Labeled(_, statement) => collect_switch_targets(statement, cases, default)?,
+        Statement::While(_, statement, _) => collect_switch_targets(statement, cases, default)?,
+        Statement::DoWhile(statement, _, _) => collect_switch_targets(statement, cases, default)?,
+        Statement::For(_, _, _, statement, _) => collect_switch_targets(statement, cases, default)?,
+        _ => ()
+    }
+
+    Ok(())
+}
+
 fn emit_statement(statement: &Statement, instructions: &mut Instructions) -> Result<()> {
     match statement {
         Statement::Return(expression) => {
@@ -196,6 +243,40 @@ fn emit_statement(statement: &Statement, instructions: &mut Instructions) -> Res
             instructions.push(Instruction::Label(else_label));
             emit_statement(else_branch, instructions)?;
             instructions.push(Instruction::Label(end_if));
+        },
+        Statement::Switch(condition, body, label) => {
+            let condition_value = emit_tacky(condition, instructions)?;
+            let break_label = mklabel("break", label);
+            let mut cases: Vec<(Const, Identifier)> = Vec::new();
+            let mut default_label: Option<Identifier> = None;
+            collect_switch_targets(body, &mut cases, &mut default_label)?;
+
+            for (case_constant, case_label) in cases {
+                let result = make_tacky_variable("switch_case", &Type::Int);
+                instructions.push(Instruction::Binary(
+                    BinaryOperator::Equal,
+                    condition_value.clone(),
+                    Val::Constant(case_constant),
+                    result.clone()
+                ));
+                instructions.push(Instruction::JumpIfNotZero(result, case_label));
+            }
+
+            match default_label {
+                Some(default_target) => instructions.push(Instruction::Jump(default_target)),
+                None => instructions.push(Instruction::Jump(break_label.clone()))
+            }
+
+            emit_statement(body, instructions)?;
+            instructions.push(Instruction::Label(break_label));
+        },
+        Statement::Case(_, body, label) => {
+            instructions.push(Instruction::Label(label.clone()));
+            emit_statement(body, instructions)?;
+        },
+        Statement::Default(body, label) => {
+            instructions.push(Instruction::Label(label.clone()));
+            emit_statement(body, instructions)?;
         },
         Statement::Compound(block) => {
             emit_block(block, instructions)?;

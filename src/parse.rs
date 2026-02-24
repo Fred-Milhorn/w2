@@ -130,6 +130,9 @@ pub enum Statement {
     Expression(Expression),
     If(Expression, Box<Statement>, Option<Box<Statement>>),
     Compound(Block),
+    Switch(Expression, Box<Statement>, Label),
+    Case(Expression, Box<Statement>, Label),
+    Default(Box<Statement>, Label),
     Break(Label),
     Continue(Label),
     Goto(Identifier),
@@ -491,6 +494,33 @@ fn parse_goto(tokens: &mut TokenStream) -> Result<Statement> {
     Ok(Statement::Goto(label))
 }
 
+fn parse_switch(tokens: &mut TokenStream) -> Result<Statement> {
+    tokens.expect(Token::Switch)?;
+    tokens.expect(Token::OpenParen)?;
+    let condition = parse_expression(tokens, 0)?;
+    tokens.expect(Token::CloseParen)?;
+    let statement = parse_statement(tokens)?;
+
+    Ok(Statement::Switch(condition, Box::new(statement), temp_name("switch")))
+}
+
+fn parse_case(tokens: &mut TokenStream) -> Result<Statement> {
+    tokens.expect(Token::Case)?;
+    let expression = parse_expression(tokens, 0)?;
+    tokens.expect(Token::Colon)?;
+    let statement = parse_statement(tokens)?;
+
+    Ok(Statement::Case(expression, Box::new(statement), temp_name("case")))
+}
+
+fn parse_default(tokens: &mut TokenStream) -> Result<Statement> {
+    tokens.expect(Token::Default)?;
+    tokens.expect(Token::Colon)?;
+    let statement = parse_statement(tokens)?;
+
+    Ok(Statement::Default(Box::new(statement), temp_name("default")))
+}
+
 fn parse_statement(tokens: &mut TokenStream) -> Result<Statement> {
     if matches!(tokens.peek_nth(1), Some(Token::Colon))
         && let Token::Identifier(name) = tokens.peek()?
@@ -514,6 +544,9 @@ fn parse_statement(tokens: &mut TokenStream) -> Result<Statement> {
             tokens.expect(Token::Semicolon)?;
             Statement::Continue(temp_name("continue"))
         },
+        Token::Switch => parse_switch(tokens)?,
+        Token::Case => parse_case(tokens)?,
+        Token::Default => parse_default(tokens)?,
         Token::Goto => parse_goto(tokens)?,
         Token::While => {
             tokens.expect(Token::While)?;
@@ -969,6 +1002,27 @@ mod tests {
                 assert!(matches!(rhs.as_ref(), Expression::PostfixDecrement(_, Type::None)));
             },
             _ => panic!("expected binary plus with increment operands, got {expression:?}")
+        }
+    }
+
+    #[test]
+    fn parses_switch_with_case_and_default() {
+        let ast = parse_source(
+            "int main(void) { int a = 1; switch (a) { case 1: return 1; default: return 0; } }"
+        );
+
+        match ast {
+            Ast::Program(declarations) => match declarations.first() {
+                Some(Declaration::FunDecl(FunctionDeclaration(_, _, Some(body), _, _))) => {
+                    match body.get(1) {
+                        Some(BlockItem::S(Statement::Switch(_, switch_body, _))) => {
+                            assert!(matches!(switch_body.as_ref(), Statement::Compound(_)));
+                        },
+                        _ => panic!("expected switch statement in function body")
+                    }
+                },
+                _ => panic!("expected function declaration with body")
+            }
         }
     }
 }

@@ -4,7 +4,7 @@
 
 use anyhow::{Result, bail};
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::code::AssemblyType;
 use crate::convert::{convert_static_init, convert_to, get_common_type};
@@ -354,6 +354,20 @@ fn resolve_statement(statement: &Statement, ident_map: &IdentMap) -> Result<Stat
             let mut new_ident_map = ident_map.duplicate();
             Statement::Compound(resolve_block(block, &mut new_ident_map)?)
         },
+        Statement::Switch(condition, statement, label) => {
+            let resolved_condition = resolve_expression(condition, ident_map)?;
+            let resolved_statement = resolve_statement(statement, ident_map)?;
+            Statement::Switch(resolved_condition, Box::new(resolved_statement), label.clone())
+        },
+        Statement::Case(expression, statement, label) => {
+            let resolved_expression = resolve_expression(expression, ident_map)?;
+            let resolved_statement = resolve_statement(statement, ident_map)?;
+            Statement::Case(resolved_expression, Box::new(resolved_statement), label.clone())
+        },
+        Statement::Default(statement, label) => {
+            let resolved_statement = resolve_statement(statement, ident_map)?;
+            Statement::Default(Box::new(resolved_statement), label.clone())
+        },
         Statement::Goto(_) => statement.clone(),
         Statement::Labeled(label, statement) => {
             let resolved = resolve_statement(statement, ident_map)?;
@@ -531,6 +545,9 @@ fn collect_statement_labels(
             }
         },
         Statement::Compound(block) => collect_block_labels(block, labels)?,
+        Statement::Switch(_, body, _) => collect_statement_labels(body, labels)?,
+        Statement::Case(_, body, _) => collect_statement_labels(body, labels)?,
+        Statement::Default(body, _) => collect_statement_labels(body, labels)?,
         Statement::Labeled(name, statement) => {
             if labels.contains_key(name) {
                 bail!("duplicate label: '{name}'");
@@ -557,28 +574,102 @@ fn collect_block_labels(block: &Block, labels: &mut HashMap<Identifier, Identifi
     Ok(())
 }
 
+#[derive(Debug, Default)]
+struct SwitchLabelState {
+    case_values: HashSet<i64>,
+    has_default: bool
+}
+
+fn case_constant_value(expression: &Expression) -> Result<i64> {
+    match expression {
+        Expression::Constant(Const::ConstInt(value), _) => Ok(*value),
+        Expression::Constant(Const::ConstLong(value), _) => Ok(*value),
+        Expression::Unary(UnaryOperator::Negate, inner, _) => Ok(-case_constant_value(inner)?),
+        _ => bail!("case label must be an integer constant")
+    }
+}
+
 fn label_statement(
-    statement: &Statement, loop_label: &Option<Label>, label_map: &HashMap<Identifier, Identifier>
+    statement: &Statement, continue_label: &Option<Label>, break_label: &Option<Label>,
+    label_map: &HashMap<Identifier, Identifier>, switch_stack: &mut Vec<SwitchLabelState>
 ) -> Result<Statement> {
     let labeled_statement = match statement {
         Statement::If(condition, then_part, else_part) => {
-            let labeled_then = Box::new(label_statement(then_part, loop_label, label_map)?);
+            let labeled_then = Box::new(label_statement(
+                then_part,
+                continue_label,
+                break_label,
+                label_map,
+                switch_stack
+            )?);
             let labeled_else = match else_part {
-                Some(else_branch) => {
-                    Some(Box::new(label_statement(else_branch, loop_label, label_map)?))
-                },
+                Some(else_branch) => Some(Box::new(label_statement(
+                    else_branch,
+                    continue_label,
+                    break_label,
+                    label_map,
+                    switch_stack
+                )?)),
                 None => None
             };
             Statement::If(condition.clone(), labeled_then, labeled_else)
         },
-        Statement::Compound(block) => {
-            Statement::Compound(label_block(block, loop_label, label_map)?)
+        Statement::Compound(block) => Statement::Compound(label_block(
+            block,
+            continue_label,
+            break_label,
+            label_map,
+            switch_stack
+        )?),
+        Statement::Switch(condition, body, _) => {
+            let switch_label = temp_name("switch");
+            switch_stack.push(SwitchLabelState::default());
+            let labeled_body = label_statement(
+                body,
+                continue_label,
+                &Some(switch_label.clone()),
+                label_map,
+                switch_stack
+            )?;
+            switch_stack.pop();
+            Statement::Switch(condition.clone(), Box::new(labeled_body), switch_label)
         },
-        Statement::Break(_) => match loop_label {
+        Statement::Case(expression, body, _) => {
+            let value = case_constant_value(expression)?;
+            let active_switch = match switch_stack.last_mut() {
+                Some(active_switch) => active_switch,
+                None => bail!("case statement outside of switch")
+            };
+            if active_switch.case_values.contains(&value) {
+                bail!("duplicate case value in switch: {value}");
+            }
+            active_switch.case_values.insert(value);
+
+            let case_label = temp_name("case");
+            let labeled_body =
+                label_statement(body, continue_label, break_label, label_map, switch_stack)?;
+            Statement::Case(expression.clone(), Box::new(labeled_body), case_label)
+        },
+        Statement::Default(body, _) => {
+            let active_switch = match switch_stack.last_mut() {
+                Some(active_switch) => active_switch,
+                None => bail!("default statement outside of switch")
+            };
+            if active_switch.has_default {
+                bail!("duplicate default label in switch");
+            }
+            active_switch.has_default = true;
+
+            let default_label = temp_name("default");
+            let labeled_body =
+                label_statement(body, continue_label, break_label, label_map, switch_stack)?;
+            Statement::Default(Box::new(labeled_body), default_label)
+        },
+        Statement::Break(_) => match break_label {
             Some(name) => Statement::Break(name.clone()),
-            None => bail!("break statement outside of loop")
+            None => bail!("break statement outside of loop or switch")
         },
-        Statement::Continue(_) => match loop_label {
+        Statement::Continue(_) => match continue_label {
             Some(name) => Statement::Continue(name.clone()),
             None => bail!("continue statement outside of loop")
         },
@@ -594,22 +685,41 @@ fn label_statement(
                 Some(entry) => entry.clone(),
                 None => bail!("unknown label: '{name}'")
             };
-            let labeled = label_statement(statement, loop_label, label_map)?;
+            let labeled =
+                label_statement(statement, continue_label, break_label, label_map, switch_stack)?;
             Statement::Labeled(label, Box::new(labeled))
         },
         Statement::While(condition, body, _) => {
             let while_label = temp_name("while");
-            let labeled_body = label_statement(body, &Some(while_label.clone()), label_map)?;
+            let labeled_body = label_statement(
+                body,
+                &Some(while_label.clone()),
+                &Some(while_label.clone()),
+                label_map,
+                switch_stack
+            )?;
             Statement::While(condition.clone(), Box::new(labeled_body), while_label)
         },
         Statement::DoWhile(body, condition, _) => {
             let do_while_label = temp_name("dowhile");
-            let labeled_body = label_statement(body, &Some(do_while_label.clone()), label_map)?;
+            let labeled_body = label_statement(
+                body,
+                &Some(do_while_label.clone()),
+                &Some(do_while_label.clone()),
+                label_map,
+                switch_stack
+            )?;
             Statement::DoWhile(Box::new(labeled_body), condition.clone(), do_while_label)
         },
         Statement::For(for_init, condition, post, body, _) => {
             let for_label = temp_name("for");
-            let labeled_body = label_statement(body, &Some(for_label.clone()), label_map)?;
+            let labeled_body = label_statement(
+                body,
+                &Some(for_label.clone()),
+                &Some(for_label.clone()),
+                label_map,
+                switch_stack
+            )?;
             Statement::For(
                 for_init.clone(),
                 condition.clone(),
@@ -625,7 +735,8 @@ fn label_statement(
 }
 
 fn label_block(
-    block: &Block, loop_label: &Option<Label>, label_map: &HashMap<Identifier, Identifier>
+    block: &Block, continue_label: &Option<Label>, break_label: &Option<Label>,
+    label_map: &HashMap<Identifier, Identifier>, switch_stack: &mut Vec<SwitchLabelState>
 ) -> Result<Block> {
     let mut new_block = Vec::<BlockItem>::new();
 
@@ -635,7 +746,13 @@ fn label_block(
                 new_block.push(item.clone());
             },
             BlockItem::S(statement) => {
-                let labeled_statement = label_statement(statement, loop_label, label_map)?;
+                let labeled_statement = label_statement(
+                    statement,
+                    continue_label,
+                    break_label,
+                    label_map,
+                    switch_stack
+                )?;
                 new_block.push(BlockItem::S(labeled_statement));
             }
         }
@@ -649,8 +766,9 @@ fn label_control_flow(declaration: &FunctionDeclaration) -> Result<FunctionDecla
         declaration
     {
         let mut label_map: HashMap<Identifier, Identifier> = HashMap::new();
+        let mut switch_stack = Vec::<SwitchLabelState>::new();
         collect_block_labels(body, &mut label_map)?;
-        let new_body = label_block(body, &None, &label_map)?;
+        let new_body = label_block(body, &None, &None, &label_map, &mut switch_stack)?;
         return Ok(FunctionDeclaration(
             name.clone(),
             opt_params.clone(),
@@ -711,6 +829,24 @@ fn typecheck_statement(statement: &Statement, name: &str) -> Result<Statement> {
             Statement::If(new_condition, Box::new(new_then_branch), new_else_branch)
         },
         Statement::Compound(block) => Statement::Compound(typecheck_block(block, name)?),
+        Statement::Switch(condition, statement, label) => {
+            let new_condition = typecheck_expression(condition)?;
+            let condition_type = new_condition.get_type();
+            if !matches!(condition_type, Type::Int | Type::Long) {
+                bail!("typecheck_statement: invalid switch condition type: {condition_type:?}");
+            }
+            let new_statement = typecheck_statement(statement, name)?;
+            Statement::Switch(new_condition, Box::new(new_statement), label.clone())
+        },
+        Statement::Case(expression, statement, label) => {
+            let new_expression = typecheck_expression(expression)?;
+            let new_statement = typecheck_statement(statement, name)?;
+            Statement::Case(new_expression, Box::new(new_statement), label.clone())
+        },
+        Statement::Default(statement, label) => {
+            let new_statement = typecheck_statement(statement, name)?;
+            Statement::Default(Box::new(new_statement), label.clone())
+        },
         Statement::Goto(_) => statement.clone(),
         Statement::Labeled(label, statement) => {
             let new_statement = typecheck_statement(statement, name)?;
@@ -1201,5 +1337,25 @@ mod tests {
     fn accepts_prefix_and_postfix_increment_on_variables() {
         let source = "int main(void) { int a = 1; int b = a++; return ++b; }";
         parse_and_validate(source).expect("valid variable increment should pass");
+    }
+
+    #[test]
+    fn rejects_case_outside_switch() {
+        let source = "int main(void) { case 1: return 0; }";
+        let err = parse_and_validate(source).expect_err("case outside switch should fail");
+        assert!(err.to_string().contains("case statement outside of switch"));
+    }
+
+    #[test]
+    fn rejects_duplicate_case_values() {
+        let source = "int main(void) { switch (1) { case 1: return 0; case 1: return 1; } }";
+        let err = parse_and_validate(source).expect_err("duplicate case should fail");
+        assert!(err.to_string().contains("duplicate case value in switch"));
+    }
+
+    #[test]
+    fn accepts_break_in_switch() {
+        let source = "int main(void) { int a = 1; switch (a) { case 1: break; default: return 0; } return 1; }";
+        parse_and_validate(source).expect("break inside switch should pass");
     }
 }
