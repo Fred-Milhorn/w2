@@ -324,10 +324,12 @@ fn parse_function_declaration(
 }
 
 fn parse_constant(token: &Token) -> Result<Expression> {
+    const INT_MAX: i64 = (1i64 << 31) - 1;
+
     let number = match token {
         Token::Constant(value) => {
             let number: i64 = value.parse()?;
-            if number <= ((2 ^ 31) - 1) {
+            if number <= INT_MAX {
                 Expression::Constant(Const::ConstInt(number), Type::Int)
             } else {
                 Expression::Constant(Const::ConstLong(number), Type::Long)
@@ -750,6 +752,15 @@ mod tests {
         }
     }
 
+    fn assert_long_constant(expression: &Expression, value: i64) {
+        match expression {
+            Expression::Constant(Const::ConstLong(actual), Type::Long) => {
+                assert_eq!(*actual, value)
+            },
+            _ => panic!("expected long constant {value}, got {expression:?}")
+        }
+    }
+
     #[test]
     fn parses_binary_precedence() {
         let ast = parse_source("int main(void) { return 1 + 2 * 3; }");
@@ -814,6 +825,32 @@ mod tests {
                 assert_int_constant(else_branch, 3);
             },
             _ => panic!("expected conditional expression, got {expression:?}")
+        }
+    }
+
+    #[test]
+    fn parses_unsuffixed_literals_with_correct_width() {
+        let ast_int = parse_source("int main(void) { return 2147483647; }");
+        assert_int_constant(first_return_expression(&ast_int), 2_147_483_647);
+
+        let ast_long = parse_source("int main(void) { return 2147483648; }");
+        assert_long_constant(first_return_expression(&ast_long), 2_147_483_648);
+    }
+
+    #[test]
+    fn parses_not_sum_literals_as_ints() {
+        let ast = parse_source("int main(void) { return !(3 - 44); }");
+        let expression = first_return_expression(&ast);
+
+        match expression {
+            Expression::Unary(_, inner, Type::None) => match inner.as_ref() {
+                Expression::Binary(BinaryOperator::Minus, lhs, rhs, Type::None) => {
+                    assert_int_constant(lhs, 3);
+                    assert_int_constant(rhs, 44);
+                },
+                _ => panic!("expected unary-not over subtraction, got {inner:?}")
+            },
+            _ => panic!("expected unary-not expression, got {expression:?}")
         }
     }
 }

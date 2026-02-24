@@ -606,6 +606,7 @@ fn fixup_pseudo(function: &Function) -> Function {
                 },
                 Instruction::SetCC(op, dst) => Instruction::SetCC(op.clone(), fixup(dst)),
                 Instruction::Push(src) => Instruction::Push(fixup(src)),
+                Instruction::Movsx(src, dst) => Instruction::Movsx(fixup(src), fixup(dst)),
                 _ => instruction.clone()
             })
         });
@@ -668,6 +669,14 @@ fn fixup_invalid(function: &Function) -> Function {
                         Operand::Reg(Register::R10),
                         dst.clone()
                     ));
+                },
+                Instruction::Movsx(src, dst) if invalid!(src, dst) => {
+                    instructions.push(Instruction::Mov(
+                        AssemblyType::Longword,
+                        src.clone(),
+                        Operand::Reg(Register::R10)
+                    ));
+                    instructions.push(Instruction::Movsx(Operand::Reg(Register::R10), dst.clone()));
                 },
                 Instruction::Idiv(atype, Operand::Imm(number)) => {
                     instructions.push(Instruction::Mov(
@@ -861,7 +870,9 @@ fn emit_instruction(code: &mut String, instruction: &Instruction) -> Result<()> 
             };
             writeln!(code, "    {}  {}, {}", operator.name(), src_name, dst.r4b())?;
         },
-        Instruction::Movsx(_, _) => todo!()
+        Instruction::Movsx(src, dst) => {
+            writeln!(code, "    movslq  {}, {}", src.r4b(), dst.r8b())?;
+        }
     }
 
     Ok(())
@@ -927,4 +938,65 @@ _{name}:
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        Function, Instruction, Operand, Register, emit_instruction, fixup_invalid, fixup_pseudo
+    };
+
+    #[test]
+    fn emit_instruction_supports_movsx() {
+        let mut code = String::new();
+        emit_instruction(
+            &mut code,
+            &Instruction::Movsx(Operand::Imm(3), Operand::Reg(Register::AX))
+        )
+        .expect("emission should succeed");
+
+        assert!(code.contains("movslq"));
+        assert!(code.contains("$3"));
+        assert!(code.contains("%rax"));
+    }
+
+    #[test]
+    fn fixup_pseudo_rewrites_movsx_operands() {
+        let function = Function(
+            "f".to_string(),
+            true,
+            0,
+            Some(vec![Instruction::Movsx(
+                Operand::Pseudo("src".to_string()),
+                Operand::Pseudo("dst".to_string())
+            )])
+        );
+
+        let fixed = fixup_pseudo(&function);
+        let Function(_, _, _, body) = fixed;
+        let instructions = body.expect("expected instructions");
+        assert_eq!(instructions, vec![Instruction::Movsx(Operand::Stack(-4), Operand::Stack(-8))]);
+    }
+
+    #[test]
+    fn fixup_invalid_rewrites_mem_to_mem_movsx() {
+        let function = Function(
+            "f".to_string(),
+            true,
+            0,
+            Some(vec![Instruction::Movsx(Operand::Stack(-4), Operand::Stack(-8))])
+        );
+
+        let fixed = fixup_invalid(&function);
+        let Function(_, _, _, body) = fixed;
+        let instructions = body.expect("expected instructions");
+        assert_eq!(instructions, vec![
+            Instruction::Mov(
+                super::AssemblyType::Longword,
+                Operand::Stack(-4),
+                Operand::Reg(Register::R10)
+            ),
+            Instruction::Movsx(Operand::Reg(Register::R10), Operand::Stack(-8))
+        ]);
+    }
 }

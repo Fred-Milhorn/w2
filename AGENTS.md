@@ -67,7 +67,6 @@ Do not:
 - Emit trailing commas in enums/structs contrary to rustfmt config.
 
 ## Known quirks/notes
-- `parse_constant` uses `2 ^ 31` which is bitwise XOR in Rust; it still produces a small limit but is semantically off. If adjusting, consider `(1i64 << 31) - 1`.
 - Assembly emitter currently always uses 32-bit ops for integer ALU and handles sign-extension/truncation explicitly; keep consistent unless widening semantics are changed.
 - Function prologue/epilogue is minimal; stack alignment handled by `fixup_pseudo` and call-sites add padding for odd arg counts.
 
