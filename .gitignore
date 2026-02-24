@@ -10,8 +10,9 @@
 
 /cprogs
 .DS_Store
-!Makefile
 /target
+/xtask/target
+/xtask/Cargo.lock
 
 *.c
 *.i
@@ -19,3 +20,8 @@
 *.log
 *.o
 *.s
+
+# Editor backups/swap files
+\#*#
+*.swp
+*.swo

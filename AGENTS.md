@@ -41,12 +41,12 @@ When extending the language or backend, keep these guardrails:
 ## Runtime and tests
 - Build: `cargo build`.
 - Run compiler: `target/debug/w2 [--debug] [--lex|--parse|--validate|--tacky|--codegen|--emitcode|--compile] file.c`.
-- Chapter tests: initialize the chapter-test submodule with `make test-init`, then use `w2test.sh` wrapper around `writing-a-c-compiler-tests/test_compiler`. Example: `CHAPTER=10 ./w2test.sh` or `CHAPTER=10 STAGE=parse ./w2test.sh`.
+- Chapter tests: initialize the chapter-test submodule with `cargo xtask test-init`, then run tests via `cargo xtask test --chapter <n> [--stage <stage>] [--failfast] [--backtrace]`.
 - Fast internal tests: `cargo test`.
 - Test layering: prefer adding internal unit tests for parser/validator/codegen behavior and use chapter tests as end-to-end coverage.
 
 ## Submodule update policy
-- Update chapter tests with `make test-update` (or equivalent `git submodule update --remote --merge writing-a-c-compiler-tests`).
+- Update chapter tests with `cargo xtask test-update` (or equivalent `git submodule update --remote --merge writing-a-c-compiler-tests`).
 - Commit submodule updates as an intentional gitlink change in the main repo when upstream test updates are desired.
 - Do not modify files inside `writing-a-c-compiler-tests` unless intentionally contributing to that upstream project.
 

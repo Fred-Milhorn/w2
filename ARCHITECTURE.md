@@ -265,8 +265,8 @@ Flag processing sets boolean stage gates. For each input file:
 ---
 ## 17. Testing Harness
 - Upstream chapter tests live in the `writing-a-c-compiler-tests` git submodule.
-- Setup/update helpers are in `Makefile`: `make test-init`, `make test-update`, `make test-status`.
-- Script: `w2test.sh` wraps upstream `writing-a-c-compiler-tests/test_compiler` runner.
+- Setup/update helpers are in `cargo xtask`: `cargo xtask test-init`, `cargo xtask test-update`, `cargo xtask test-status`.
+- `cargo xtask test` wraps upstream `writing-a-c-compiler-tests/test_compiler` runner.
 - Environment variables: `CHAPTER` (required), `STAGE` (optional). Harness invokes built `target/debug/w2` with appropriate stage flag.
 - Stage names correlate to CLI flags (minus leading dashes).
 

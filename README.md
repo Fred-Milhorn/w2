@@ -22,7 +22,7 @@ cargo build
 
 If you already cloned without submodules, initialize them with:
 ```bash
-make test-init
+cargo xtask test-init
 ```
 
 ## Build
@@ -71,44 +71,42 @@ This repo includes the upstream “writing-a-c-compiler-tests” harness as a gi
 
 Initialize it (or re-sync nested submodules) with:
 ```bash
-make test-init
+cargo xtask test-init
 ```
 
 To pull the latest upstream harness while developing:
 ```bash
-make test-update
+cargo xtask test-update
 ```
 
-Run chapter tests with the helper script `w2test.sh` from the project root.
+Run chapter tests with the Rust-native task runner:
 
-Environment variables:
+Options:
 - `CHAPTER` (required): numeric chapter directory to run (e.g., `10`)
-- `STAGE` (optional): run tests at a specific compiler stage (`parse`, `validate`, `tacky`, `codegen`, `emitcode`)
+- `STAGE` (optional): run tests at a specific stage (`lex`, `parse`, `validate`, `tacky`, `codegen`, `run`)
 - `FAILFAST` (optional): set to `1` to stop on the first test failure
 - `RUST_BACKTRACE` (optional): set to `1` (or `full`) to enable Rust backtraces from compiler failures
-- `-v`/`--verbose` (optional): verbose script output
+- `-v`/`--verbose` (optional): verbose harness output
 - `-f`/`--failfast` (optional): stop on the first test failure
 - `-b`/`--backtrace` (optional): force `RUST_BACKTRACE=1` while running the harness
 
 Examples:
 ```bash
 # Run chapter 10 tests end-to-end
-CHAPTER=10 ./w2test.sh
+cargo xtask test --chapter 10
 
 # Run chapter 10 tests at the parse stage only
-CHAPTER=10 STAGE=parse ./w2test.sh
+cargo xtask test --chapter 10 --stage parse
 
 # Stop on first failure
-CHAPTER=10 FAILFAST=1 ./w2test.sh
+cargo xtask test --chapter 10 --failfast
 
 # Enable Rust backtraces for compiler panics/errors
-CHAPTER=10 RUST_BACKTRACE=1 ./w2test.sh
+cargo xtask test --chapter 10 --backtrace
 
-# Or with flags
-./w2test.sh --chapter 10 --stage parse --verbose --failfast --backtrace
+# Environment-variable form also works
+CHAPTER=10 STAGE=parse FAILFAST=1 RUST_BACKTRACE=1 cargo xtask test
 ```
-
-The script invokes `writing-a-c-compiler-tests/test_compiler` with the built binary at `target/debug/w2`.
 
 For compiler-internal checks (non-chapter tests), run:
 ```bash
