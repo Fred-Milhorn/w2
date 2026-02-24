@@ -12,13 +12,24 @@ usage() {
     echo "Options:"
     echo " -h, --help      Display this help message"
     echo " -v, --verbose   Enable verbose mode"
+    echo " -f, --failfast  Stop on first test failure"
+    echo " -b, --backtrace Enable Rust backtraces (RUST_BACKTRACE=1)"
     echo " -c, --chapter   Chapter we are working in"
     echo " -s, --stage     Compiler stage we're testing"
 }
 
 verbose_mode=false
+failfast=false
+backtrace=false
 chapter="${CHAPTER:-}"
 stage="${STAGE:-}"
+
+case "${FAILFAST:-}" in
+    1|true|TRUE|yes|YES|on|ON) failfast=true ;;
+esac
+case "${RUST_BACKTRACE:-}" in
+    1|full|FULL|true|TRUE|yes|YES|on|ON) backtrace=true ;;
+esac
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -26,6 +37,10 @@ while [[ $# -gt 0 ]]; do
             usage; exit 0 ;;
         -v|--verbose)
             verbose_mode=true; shift; continue ;;
+        -f|--failfast)
+            failfast=true; shift; continue ;;
+        -b|--backtrace)
+            backtrace=true; shift; continue ;;
         -c|--chapter)
             if [[ -z "$2" || "$2" == -* ]]; then
                 echo "chapter number is required." >&2; usage; exit 1
@@ -78,5 +93,12 @@ args=(./test_compiler "$W2BIN" --chapter "$chapter")
 if [[ -n "$stage" ]]; then
     args+=(--stage "$stage")
 fi
+if [[ $failfast == true ]]; then
+    args+=(--failfast)
+fi
 
-"${args[@]}"
+if [[ $backtrace == true ]]; then
+    RUST_BACKTRACE=1 "${args[@]}"
+else
+    "${args[@]}"
+fi

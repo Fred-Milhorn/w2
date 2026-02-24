@@ -25,13 +25,13 @@ test-update:
 test-status:
 	git submodule status --recursive writing-a-c-compiler-tests
 
-# Usage: make test CHAPTER=10 [STAGE=parse]
+# Usage: make test CHAPTER=10 [STAGE=parse] [FAILFAST=1] [BACKTRACE=1]
 test:
 	@if [ -z "$$CHAPTER" ]; then \
 		echo "CHAPTER is required (e.g. make test CHAPTER=10)" >&2; \
 		exit 1; \
 	fi; \
-	CHAPTER=$$CHAPTER STAGE=$$STAGE ./w2test.sh
+	CHAPTER=$$CHAPTER STAGE=$$STAGE FAILFAST=$$FAILFAST RUST_BACKTRACE=$$BACKTRACE ./w2test.sh
 
 # Quick run of the compiler on a file: make run FILE=examples/foo.c ARGS="--debug --parse"
 run:

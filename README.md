@@ -84,7 +84,11 @@ Run chapter tests with the helper script `w2test.sh` from the project root.
 Environment variables:
 - `CHAPTER` (required): numeric chapter directory to run (e.g., `10`)
 - `STAGE` (optional): run tests at a specific compiler stage (`parse`, `validate`, `tacky`, `codegen`, `emitcode`)
+- `FAILFAST` (optional): set to `1` to stop on the first test failure
+- `RUST_BACKTRACE` (optional): set to `1` (or `full`) to enable Rust backtraces from compiler failures
 - `-v`/`--verbose` (optional): verbose script output
+- `-f`/`--failfast` (optional): stop on the first test failure
+- `-b`/`--backtrace` (optional): force `RUST_BACKTRACE=1` while running the harness
 
 Examples:
 ```bash
@@ -94,8 +98,14 @@ CHAPTER=10 ./w2test.sh
 # Run chapter 10 tests at the parse stage only
 CHAPTER=10 STAGE=parse ./w2test.sh
 
+# Stop on first failure
+CHAPTER=10 FAILFAST=1 ./w2test.sh
+
+# Enable Rust backtraces for compiler panics/errors
+CHAPTER=10 RUST_BACKTRACE=1 ./w2test.sh
+
 # Or with flags
-./w2test.sh --chapter 10 --stage parse --verbose
+./w2test.sh --chapter 10 --stage parse --verbose --failfast --backtrace
 ```
 
 The script invokes `writing-a-c-compiler-tests/test_compiler` with the built binary at `target/debug/w2`.
