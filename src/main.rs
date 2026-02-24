@@ -6,7 +6,7 @@
 //!
 //! Given one C file on the command line, create an x86 executable. GCC is doing the
 //! work of preprocessing and compiling the x86 assembly language. All the lexing, parsing,
-//! and assembly language creation is done by this program, wcc.
+//! and assembly language creation is done by this program, w2.
 //!
 //! # Explaination
 //!

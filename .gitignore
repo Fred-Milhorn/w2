@@ -3,6 +3,7 @@
 
 # Unignore all files with extensions
 !*.*
+!LICENSE
 
 # Unignore all dirs
 !*/
