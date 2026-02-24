@@ -11,6 +11,7 @@ struct TestOptions {
     failfast:  bool,
     backtrace: bool,
     verbose:   bool,
+    increment: bool,
     goto:      bool,
     switch:    bool
 }
@@ -36,6 +37,7 @@ fn print_test_help() {
            -v, --verbose    Enable verbose mode for harness output\n\
            -f, --failfast   Stop on first test failure\n\
            -b, --backtrace  Force RUST_BACKTRACE=1 while running harness\n\
+           --increment       Include tests for increment/decrement operators\n\
            --goto            Include tests for goto and labeled statements\n\
            --switch          Include tests for switch statements\n\
            -c, --chapter N  Chapter to run (or CHAPTER env var)\n\
@@ -98,6 +100,10 @@ fn parse_test_args(raw_args: &[String]) -> TaskResult<(TestOptions, bool)> {
                 opts.backtrace = true;
                 ix += 1;
             },
+            "--increment" => {
+                opts.increment = true;
+                ix += 1;
+            },
             "--goto" => {
                 opts.goto = true;
                 ix += 1;
@@ -154,6 +160,9 @@ fn parse_test_args(raw_args: &[String]) -> TaskResult<(TestOptions, bool)> {
     if !opts.backtrace {
         opts.backtrace = truthy_env("RUST_BACKTRACE");
     }
+    if !opts.increment {
+        opts.increment = truthy_env("INCREMENT");
+    }
     if !opts.goto {
         opts.goto = truthy_env("GOTO");
     }
@@ -209,6 +218,9 @@ fn run_test(raw_args: &[String]) -> TaskResult<i32> {
     }
     if opts.verbose {
         command.arg("--verbose");
+    }
+    if opts.increment {
+        command.arg("--increment");
     }
     if opts.goto {
         command.arg("--goto");

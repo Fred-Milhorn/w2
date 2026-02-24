@@ -26,6 +26,8 @@ pub enum Token {
     Complement,
     Minus,
     Plus,
+    Increment,
+    Decrement,
     Multiply,
     Divide,
     Remainder,
@@ -166,7 +168,7 @@ pub fn lex(input: &str) -> Result<TokenList> {
     static RE_CONSTANT  : Lazy<Regex> = Lazy::new(|| Regex::new(r"^[0-9]+\b").unwrap());
     static RE_SEPARATORS: Lazy<Regex> = Lazy::new(|| Regex::new(r"^[\,\{\}\(\)\;\?\:]").unwrap());
     static RE_OPERATORS1: Lazy<Regex> = Lazy::new(|| Regex::new(r"^\+=|^\-=|^\*=|^/=|^\%=|^\&=|^\|=|^\^=|^<<=|^>>=").unwrap());
-    static RE_OPERATORS2: Lazy<Regex> = Lazy::new(|| Regex::new(r"^&&|^<<|^>>|^\|\||^==|^!=|^<=|^>=").unwrap());
+    static RE_OPERATORS2: Lazy<Regex> = Lazy::new(|| Regex::new(r"^\+\+|^--|^&&|^<<|^>>|^\|\||^==|^!=|^<=|^>=").unwrap());
     static RE_OPERATORS3: Lazy<Regex> = Lazy::new(|| Regex::new(r"^[=!\-~+*/%|&^><]").unwrap());
 
     let mut tokens: TokenList = Vec::new();
@@ -239,6 +241,8 @@ pub fn lex(input: &str) -> Result<TokenList> {
                 (token, matched.len())
             } else if let Some(matched) = RE_OPERATORS2.find(source) {
                 let token = match matched.as_str() {
+                    "++" => Token::Increment,
+                    "--" => Token::Decrement,
                     "&&" => Token::And,
                     "||" => Token::Or,
                     "==" => Token::Equal,
@@ -287,7 +291,7 @@ mod tests {
 
     #[test]
     fn lexes_keywords_constants_and_compound_operators() {
-        let tokens = lex("static long x = 42L; x >>= 1;").expect("lex should succeed");
+        let tokens = lex("static long x = 42L; x >>= 1; ++x; x--;").expect("lex should succeed");
 
         assert_eq!(tokens, vec![
             Token::Static,
@@ -299,6 +303,12 @@ mod tests {
             Token::Identifier("x".to_string()),
             Token::RightshiftAssign,
             Token::Constant("1".to_string()),
+            Token::Semicolon,
+            Token::Increment,
+            Token::Identifier("x".to_string()),
+            Token::Semicolon,
+            Token::Identifier("x".to_string()),
+            Token::Decrement,
             Token::Semicolon,
             Token::Eot
         ]);

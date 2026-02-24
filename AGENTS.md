@@ -41,7 +41,7 @@ When extending the language or backend, keep these guardrails:
 ## Runtime and tests
 - Build: `cargo build`.
 - Run compiler: `target/debug/w2 [--debug] [--lex|--parse|--validate|--tacky|--codegen|--emitcode|--compile] file.c`.
-- Chapter tests: initialize the chapter-test submodule with `cargo xtask test-init`, then run tests via `cargo xtask test --chapter <n> [--stage <stage>] [--failfast] [--backtrace] [--goto] [--switch]`.
+- Chapter tests: initialize the chapter-test submodule with `cargo xtask test-init`, then run tests via `cargo xtask test --chapter <n> [--stage <stage>] [--failfast] [--backtrace] [--increment] [--goto] [--switch]`.
 - Fast internal tests: `cargo test`.
 - Test layering: prefer adding internal unit tests for parser/validator/codegen behavior and use chapter tests as end-to-end coverage.
 

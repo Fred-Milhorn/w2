@@ -271,6 +271,16 @@ fn make_tacky_variable(prefix: &str, var_type: &Type) -> Val {
     Val::Var(var_name)
 }
 
+fn one_for_type(var_type: &Type) -> Result<Val> {
+    let one = match var_type {
+        Type::Int => Val::Constant(Const::ConstInt(1)),
+        Type::Long => Val::Constant(Const::ConstLong(1)),
+        _ => bail!("Unsupported type for increment/decrement: {var_type:?}")
+    };
+
+    Ok(one)
+}
+
 fn emit_tacky(expression: &Expression, instructions: &mut Instructions) -> Result<Val> {
     let value = match expression {
         Expression::Cast(target_type, expression, _exp_type) => {
@@ -333,6 +343,62 @@ fn emit_tacky(expression: &Expression, instructions: &mut Instructions) -> Resul
             let dst = make_tacky_variable("unary_op", unary_type);
             instructions.push(Instruction::Unary(op.clone(), src, dst.clone()));
             dst
+        },
+        Expression::PrefixIncrement(inner, inc_type) => {
+            let lvalue = emit_tacky(inner, instructions)?;
+            let one = one_for_type(inc_type)?;
+            let result = make_tacky_variable("pre_incr", inc_type);
+            instructions.push(Instruction::Binary(
+                BinaryOperator::Plus,
+                lvalue.clone(),
+                one,
+                result.clone()
+            ));
+            instructions.push(Instruction::Copy(result.clone(), lvalue));
+            result
+        },
+        Expression::PrefixDecrement(inner, dec_type) => {
+            let lvalue = emit_tacky(inner, instructions)?;
+            let one = one_for_type(dec_type)?;
+            let result = make_tacky_variable("pre_decr", dec_type);
+            instructions.push(Instruction::Binary(
+                BinaryOperator::Minus,
+                lvalue.clone(),
+                one,
+                result.clone()
+            ));
+            instructions.push(Instruction::Copy(result.clone(), lvalue));
+            result
+        },
+        Expression::PostfixIncrement(inner, inc_type) => {
+            let lvalue = emit_tacky(inner, instructions)?;
+            let old_value = make_tacky_variable("post_incr_old", inc_type);
+            instructions.push(Instruction::Copy(lvalue.clone(), old_value.clone()));
+            let one = one_for_type(inc_type)?;
+            let result = make_tacky_variable("post_incr_new", inc_type);
+            instructions.push(Instruction::Binary(
+                BinaryOperator::Plus,
+                lvalue.clone(),
+                one,
+                result.clone()
+            ));
+            instructions.push(Instruction::Copy(result, lvalue));
+            old_value
+        },
+        Expression::PostfixDecrement(inner, dec_type) => {
+            let lvalue = emit_tacky(inner, instructions)?;
+            let old_value = make_tacky_variable("post_decr_old", dec_type);
+            instructions.push(Instruction::Copy(lvalue.clone(), old_value.clone()));
+            let one = one_for_type(dec_type)?;
+            let result = make_tacky_variable("post_decr_new", dec_type);
+            instructions.push(Instruction::Binary(
+                BinaryOperator::Minus,
+                lvalue.clone(),
+                one,
+                result.clone()
+            ));
+            instructions.push(Instruction::Copy(result, lvalue));
+            old_value
         },
         Expression::Binary(BinaryOperator::And, src, dst, bin_type) => {
             let val1 = emit_tacky(src, instructions)?;

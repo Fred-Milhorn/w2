@@ -58,6 +58,10 @@ pub enum Expression {
     Var(Identifier, Type),
     Cast(Type, Box<Expression>, Type),
     Unary(UnaryOperator, Box<Expression>, Type),
+    PrefixIncrement(Box<Expression>, Type),
+    PrefixDecrement(Box<Expression>, Type),
+    PostfixIncrement(Box<Expression>, Type),
+    PostfixDecrement(Box<Expression>, Type),
     Binary(BinaryOperator, Box<Expression>, Box<Expression>, Type),
     Assignment(Box<Expression>, Box<Expression>, Type),
     CompoundAssignment(BinaryOperator, Box<Expression>, Box<Expression>, Type),
@@ -75,6 +79,10 @@ impl Expression {
             Expression::Var(_, var_type)                       => *var_type = new_type,
             Expression::Cast(_, _, cast_type)                  => *cast_type = new_type,
             Expression::Unary(_, _, unary_type)                => *unary_type = new_type,
+            Expression::PrefixIncrement(_, inc_type)           => *inc_type = new_type,
+            Expression::PrefixDecrement(_, dec_type)           => *dec_type = new_type,
+            Expression::PostfixIncrement(_, inc_type)          => *inc_type = new_type,
+            Expression::PostfixDecrement(_, dec_type)          => *dec_type = new_type,
             Expression::Binary(_, _, _, binary_type)           => *binary_type = new_type,
             Expression::Assignment(_, _, assignment_type)      => *assignment_type = new_type,
             Expression::CompoundAssignment(_, _, _, comp_type) => *comp_type = new_type,
@@ -90,6 +98,10 @@ impl Expression {
             Expression::Var(_, var_type)                       => var_type,
             Expression::Cast(_, _, cast_type)                  => cast_type,
             Expression::Unary(_, _, unary_type)                => unary_type,
+            Expression::PrefixIncrement(_, inc_type)           => inc_type,
+            Expression::PrefixDecrement(_, dec_type)           => dec_type,
+            Expression::PostfixIncrement(_, inc_type)          => inc_type,
+            Expression::PostfixDecrement(_, dec_type)          => dec_type,
             Expression::Binary(_, _, _, binary_type)           => binary_type,
             Expression::Assignment(_, _, assignment_type)      => assignment_type,
             Expression::CompoundAssignment(_, _, _, comp_type) => comp_type,
@@ -699,10 +711,20 @@ fn parse_function_call(tokens: &mut TokenStream, name: &String) -> Result<Expres
 }
 
 fn parse_factor(tokens: &mut TokenStream) -> Result<Expression> {
-    let expression = match tokens.peek()?.clone() {
+    let mut expression = match tokens.peek()?.clone() {
         token @ (Token::Constant(_) | Token::LConstant(_)) => {
             tokens.next()?;
             parse_constant(&token)?
+        },
+        Token::Increment => {
+            tokens.next()?;
+            let inner_expression = parse_factor(tokens)?;
+            Expression::PrefixIncrement(Box::new(inner_expression), Type::None)
+        },
+        Token::Decrement => {
+            tokens.next()?;
+            let inner_expression = parse_factor(tokens)?;
+            Expression::PrefixDecrement(Box::new(inner_expression), Type::None)
         },
         Token::Identifier(name) => {
             tokens.next()?;
@@ -740,6 +762,20 @@ fn parse_factor(tokens: &mut TokenStream) -> Result<Expression> {
         },
         token => bail!("parse_expression: Unexpected token: '{token:?}'")
     };
+
+    loop {
+        match tokens.peek()?.clone() {
+            Token::Increment => {
+                tokens.next()?;
+                expression = Expression::PostfixIncrement(Box::new(expression), Type::None);
+            },
+            Token::Decrement => {
+                tokens.next()?;
+                expression = Expression::PostfixDecrement(Box::new(expression), Type::None);
+            },
+            _ => break
+        }
+    }
 
     Ok(expression)
 }
@@ -919,6 +955,20 @@ mod tests {
                 },
                 _ => panic!("expected function declaration with body")
             }
+        }
+    }
+
+    #[test]
+    fn parses_prefix_and_postfix_increment() {
+        let ast = parse_source("int main(void) { int a = 1; return ++a + a--; }");
+        let expression = first_return_expression(&ast);
+
+        match expression {
+            Expression::Binary(BinaryOperator::Plus, lhs, rhs, Type::None) => {
+                assert!(matches!(lhs.as_ref(), Expression::PrefixIncrement(_, Type::None)));
+                assert!(matches!(rhs.as_ref(), Expression::PostfixDecrement(_, Type::None)));
+            },
+            _ => panic!("expected binary plus with increment operands, got {expression:?}")
         }
     }
 }

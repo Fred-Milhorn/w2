@@ -86,11 +86,13 @@ Options:
 - `STAGE` (optional): run tests at a specific stage (`lex`, `parse`, `validate`, `tacky`, `codegen`, `run`)
 - `FAILFAST` (optional): set to `1` to stop on the first test failure
 - `RUST_BACKTRACE` (optional): set to `1` (or `full`) to enable Rust backtraces from compiler failures
+- `INCREMENT` (optional): set to `1` to include `++`/`--` extra-credit tests
 - `GOTO` (optional): set to `1` to include `goto`/labeled-statement extra-credit tests
 - `SWITCH` (optional): set to `1` to include `switch`/`case`/`default` extra-credit tests
 - `-v`/`--verbose` (optional): verbose harness output
 - `-f`/`--failfast` (optional): stop on the first test failure
 - `-b`/`--backtrace` (optional): force `RUST_BACKTRACE=1` while running the harness
+- `--increment` (optional): include `++`/`--` extra-credit tests
 - `--goto` (optional): include `goto`/labeled-statement extra-credit tests
 - `--switch` (optional): include `switch`/`case`/`default` extra-credit tests
 
@@ -108,6 +110,9 @@ cargo xtask test --chapter 10 --failfast
 # Enable Rust backtraces for compiler panics/errors
 cargo xtask test --chapter 10 --backtrace
 
+# Include increment/decrement extra-credit tests
+cargo xtask test --chapter 5 --increment
+
 # Include goto/labeled-statement extra-credit tests
 cargo xtask test --chapter 6 --goto
 
@@ -118,7 +123,7 @@ cargo xtask test --chapter 8 --switch
 cargo xtask test --chapter 8 --goto --switch
 
 # Environment-variable form also works
-CHAPTER=10 STAGE=parse FAILFAST=1 RUST_BACKTRACE=1 GOTO=1 SWITCH=1 cargo xtask test
+CHAPTER=10 STAGE=parse FAILFAST=1 RUST_BACKTRACE=1 INCREMENT=1 GOTO=1 SWITCH=1 cargo xtask test
 ```
 
 For compiler-internal checks (non-chapter tests), run:

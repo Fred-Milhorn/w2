@@ -453,6 +453,42 @@ fn resolve_expression(expression: &Expression, ident_map: &IdentMap) -> Result<E
             let resolved = resolve_expression(dst, ident_map)?;
             Expression::Unary(operator.clone(), Box::new(resolved), unary_type.clone())
         },
+        Expression::PrefixIncrement(dst, exp_type) => {
+            let resolved = resolve_expression(dst, ident_map)?;
+            match resolved {
+                Expression::Var(_, _) => {
+                    Expression::PrefixIncrement(Box::new(resolved), exp_type.clone())
+                },
+                _ => bail!("resolve_expression: Illegal lvalue: '{resolved:?}'")
+            }
+        },
+        Expression::PrefixDecrement(dst, exp_type) => {
+            let resolved = resolve_expression(dst, ident_map)?;
+            match resolved {
+                Expression::Var(_, _) => {
+                    Expression::PrefixDecrement(Box::new(resolved), exp_type.clone())
+                },
+                _ => bail!("resolve_expression: Illegal lvalue: '{resolved:?}'")
+            }
+        },
+        Expression::PostfixIncrement(dst, exp_type) => {
+            let resolved = resolve_expression(dst, ident_map)?;
+            match resolved {
+                Expression::Var(_, _) => {
+                    Expression::PostfixIncrement(Box::new(resolved), exp_type.clone())
+                },
+                _ => bail!("resolve_expression: Illegal lvalue: '{resolved:?}'")
+            }
+        },
+        Expression::PostfixDecrement(dst, exp_type) => {
+            let resolved = resolve_expression(dst, ident_map)?;
+            match resolved {
+                Expression::Var(_, _) => {
+                    Expression::PostfixDecrement(Box::new(resolved), exp_type.clone())
+                },
+                _ => bail!("resolve_expression: Illegal lvalue: '{resolved:?}'")
+            }
+        },
         Expression::Binary(operator, left, right, exp_type) => Expression::Binary(
             operator.clone(),
             Box::new(resolve_expression(left, ident_map)?),
@@ -761,6 +797,50 @@ fn typecheck_expression(expression: &Expression) -> Result<Expression> {
                 _ => typed_inner.get_type()
             };
             Expression::Unary(operator.clone(), Box::new(typed_inner), inner_type)
+        },
+        Expression::PrefixIncrement(expression, _) => {
+            let typed_inner = typecheck_expression(expression)?;
+            let inner_type = typed_inner.get_type();
+            if !matches!(typed_inner, Expression::Var(_, _)) {
+                bail!("typecheck_expression: Illegal lvalue in prefix increment: {typed_inner:?}");
+            }
+            if !matches!(inner_type, Type::Int | Type::Long) {
+                bail!("typecheck_expression: Invalid type for prefix increment: {inner_type:?}");
+            }
+            Expression::PrefixIncrement(Box::new(typed_inner), inner_type)
+        },
+        Expression::PrefixDecrement(expression, _) => {
+            let typed_inner = typecheck_expression(expression)?;
+            let inner_type = typed_inner.get_type();
+            if !matches!(typed_inner, Expression::Var(_, _)) {
+                bail!("typecheck_expression: Illegal lvalue in prefix decrement: {typed_inner:?}");
+            }
+            if !matches!(inner_type, Type::Int | Type::Long) {
+                bail!("typecheck_expression: Invalid type for prefix decrement: {inner_type:?}");
+            }
+            Expression::PrefixDecrement(Box::new(typed_inner), inner_type)
+        },
+        Expression::PostfixIncrement(expression, _) => {
+            let typed_inner = typecheck_expression(expression)?;
+            let inner_type = typed_inner.get_type();
+            if !matches!(typed_inner, Expression::Var(_, _)) {
+                bail!("typecheck_expression: Illegal lvalue in postfix increment: {typed_inner:?}");
+            }
+            if !matches!(inner_type, Type::Int | Type::Long) {
+                bail!("typecheck_expression: Invalid type for postfix increment: {inner_type:?}");
+            }
+            Expression::PostfixIncrement(Box::new(typed_inner), inner_type)
+        },
+        Expression::PostfixDecrement(expression, _) => {
+            let typed_inner = typecheck_expression(expression)?;
+            let inner_type = typed_inner.get_type();
+            if !matches!(typed_inner, Expression::Var(_, _)) {
+                bail!("typecheck_expression: Illegal lvalue in postfix decrement: {typed_inner:?}");
+            }
+            if !matches!(inner_type, Type::Int | Type::Long) {
+                bail!("typecheck_expression: Invalid type for postfix decrement: {inner_type:?}");
+            }
+            Expression::PostfixDecrement(Box::new(typed_inner), inner_type)
         },
         Expression::Binary(operator, lhs, rhs, _) => {
             let typed_lhs = typecheck_expression(lhs)?;
@@ -1108,5 +1188,18 @@ mod tests {
 
         assert_eq!(goto_target, label_target);
         assert_ne!(goto_target, "done");
+    }
+
+    #[test]
+    fn rejects_increment_on_non_lvalue() {
+        let source = "int main(void) { int a = 0; return ++(a + 1); }";
+        let err = parse_and_validate(source).expect_err("increment on non-lvalue should fail");
+        assert!(err.to_string().contains("Illegal lvalue"));
+    }
+
+    #[test]
+    fn accepts_prefix_and_postfix_increment_on_variables() {
+        let source = "int main(void) { int a = 1; int b = a++; return ++b; }";
+        parse_and_validate(source).expect("valid variable increment should pass");
     }
 }
