@@ -8,6 +8,8 @@ type TaskResult<T> = Result<T, String>;
 struct TestOptions {
     chapter:   Option<String>,
     stage:     Option<String>,
+    latest_only: bool,
+    target: Option<String>,
     failfast:  bool,
     backtrace: bool,
     verbose:   bool,
@@ -35,6 +37,8 @@ fn print_test_help() {
          Options:\n\
            -h, --help       Show this help message\n\
            -v, --verbose    Enable verbose mode for harness output\n\
+           --latest-only    Run tests for the selected chapter only\n\
+           --target T       Pass backend target to compiler under test (x86_64|arm64)\n\
            -f, --failfast   Stop on first test failure\n\
            -b, --backtrace  Force RUST_BACKTRACE=1 while running harness\n\
            --increment       Include tests for increment/decrement operators\n\
@@ -90,6 +94,25 @@ fn parse_test_args(raw_args: &[String]) -> TaskResult<(TestOptions, bool)> {
             },
             "-v" | "--verbose" => {
                 opts.verbose = true;
+                ix += 1;
+            },
+            "--latest-only" => {
+                opts.latest_only = true;
+                ix += 1;
+            },
+            "--target" => {
+                if ix + 1 >= raw_args.len() || raw_args[ix + 1].starts_with('-') {
+                    return Err("target is required".to_string());
+                }
+                opts.target = Some(raw_args[ix + 1].clone());
+                ix += 2;
+            },
+            value if value.starts_with("--target=") => {
+                let target = value.trim_start_matches("--target=").to_string();
+                if target.is_empty() {
+                    return Err("target is required".to_string());
+                }
+                opts.target = Some(target);
                 ix += 1;
             },
             "-f" | "--failfast" => {
@@ -209,6 +232,9 @@ fn run_test(raw_args: &[String]) -> TaskResult<i32> {
     let mut command = Command::new(harness);
     command.current_dir(harness_dir);
     command.arg(&compiler).arg("--chapter").arg(chapter);
+    if opts.latest_only {
+        command.arg("--latest-only");
+    }
 
     if let Some(stage) = opts.stage {
         command.arg("--stage").arg(stage);
@@ -230,6 +256,9 @@ fn run_test(raw_args: &[String]) -> TaskResult<i32> {
     }
     if opts.backtrace {
         command.env("RUST_BACKTRACE", "1");
+    }
+    if let Some(target) = opts.target {
+        command.arg("--").arg("--target").arg(target);
     }
 
     run_and_forward_exit(&mut command)

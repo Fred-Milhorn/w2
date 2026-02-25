@@ -3,9 +3,9 @@
 These instructions help coding agents produce code and edits that match this repository's architecture, style, and constraints.
 
 ## Project overview
-- Purpose: A tiny C compiler targeting x86-64 macOS, inspired by Nora Sandler's "Writing a C Compiler".
-- Pipeline: preprocess C -> lex -> parse -> validate -> generate TAC (tacky) -> generate x86-64 asm -> assemble/link with gcc.
-- Entry point: `src/main.rs` with flags to stop after stages: `--lex`, `--parse`, `--validate`, `--tacky`, `--codegen`, `--emitcode`, `--compile`. `--debug` prints stage artifacts.
+- Purpose: A tiny C compiler targeting macOS (`x86_64` and `arm64`), inspired by Nora Sandler's "Writing a C Compiler".
+- Pipeline: preprocess C -> lex -> parse -> validate -> generate TAC (tacky) -> generate target asm -> assemble/link with gcc.
+- Entry point: `src/main.rs` with flags to stop after stages: `--lex`, `--parse`, `--validate`, `--tacky`, `--codegen`, `--emitcode`, `--compile`. `--debug` prints stage artifacts. Backend target can be selected with `--target x86_64|arm64` (defaults to host arch).
 - Supported C subset: ints/longs, unary/binary ops, conditionals, loops (`while`, `do-while`, `for`), `break`/`continue`, `goto` and labeled statements, functions, file-scope and block-scope variables, `static`/`extern` storage.
 
 ## Modules and responsibilities
@@ -14,7 +14,9 @@ These instructions help coding agents produce code and edits that match this rep
 - `validate.rs`: Resolves identifiers with unique names, labels loops, maintains `SYMBOLS` and `BACKEND` tables, and performs type checking and conversion insertion. Also enforces storage class/linkage rules.
 - `tacky.rs`: Low-level three-address code (TAC) generation from validated AST; emits control-flow with labels and simple instructions. Also converts file-scope `static`/`extern` symbols into definitions.
 - `code.rs`: Low-level x86-64 assembly emission (macOS Mach-O syntax). Handles register allocation for params/temps, stack fixups, calling convention, and text/data/bss emission.
-- `utils.rs`: GCC subprocess helpers for preprocessing and assembling, temp name generation.
+- `arm64.rs`: Low-level arm64 assembly emission (macOS Mach-O syntax). Handles AArch64 calling convention, stack slots, branches, calls, and text/data/bss emission.
+- `target.rs`: Compiler target selection (`x86_64` / `arm64`) and host detection helpers.
+- `utils.rs`: GCC subprocess helpers for preprocessing and assembling, temp name generation. Target architecture is passed through `-arch`.
 
 ## Coding conventions
 - Edition: Rust 2024. Run `cargo fmt`, avoid broad formatting-only rewrites, and preserve existing style in touched code when `rustfmt.toml` unstable options are not fully enforced on stable toolchains. Annotate dense match/impls with `#[rustfmt::skip]` where layout matters.
@@ -23,7 +25,7 @@ These instructions help coding agents produce code and edits that match this rep
 - Thread-locals: Use `SYMBOLS`/`BACKEND` via `with_borrow/_mut` helpers; do not store references across calls.
 - Naming: Temporary names via `utils::temp_name(prefix)`; loop labels via `utils::mklabel(kind, label)`.
 - Data types: C `int` => `Type::Int` (32-bit), `long` => `Type::Long` (64-bit). Assembly sizes via `AssemblyType::{Longword,Quadword}`.
-- Platform: macOS x86-64, System V-like calling but Mach-O/Mac asm syntax, underscores on symbol names when emitting.
+- Platform: macOS `x86_64` and `arm64`, Mach-O syntax, underscore-prefixed symbols when emitting.
 
 ## Adding features safely
 When extending the language or backend, keep these guardrails:
@@ -40,8 +42,8 @@ When extending the language or backend, keep these guardrails:
 
 ## Runtime and tests
 - Build: `cargo build`.
-- Run compiler: `target/debug/w2 [--debug] [--lex|--parse|--validate|--tacky|--codegen|--emitcode|--compile] file.c`.
-- Chapter tests: initialize the chapter-test submodule with `cargo xtask test-init`, then run tests via `cargo xtask test --chapter <n> [--stage <stage>] [--failfast] [--backtrace] [--increment] [--goto] [--switch]`.
+- Run compiler: `target/debug/w2 [--target <x86_64|arm64>] [--debug] [--lex|--parse|--validate|--tacky|--codegen|--emitcode|--compile] file.c`.
+- Chapter tests: initialize the chapter-test submodule with `cargo xtask test-init`, then run tests via `cargo xtask test --chapter <n> [--latest-only] [--stage <stage>] [--target <x86_64|arm64>] [--failfast] [--backtrace] [--increment] [--goto] [--switch]`.
 - Fast internal tests: `cargo test`.
 - Test layering: prefer adding internal unit tests for parser/validator/codegen behavior and use chapter tests as end-to-end coverage.
 

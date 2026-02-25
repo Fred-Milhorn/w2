@@ -4,12 +4,12 @@ This document provides a deep, end‑to‑end walkthrough of the compiler archit
 
 ---
 ## 1. High‑Level Overview
-`w2` compiles a single C source file (subset) into an x86‑64 macOS Mach‑O executable using the system toolchain for preprocessing and final assembly. Internally it implements: lexing, parsing, semantic validation (name resolution + type checking), a three‑address code (TAC) IR called *Tacky*, and a second assembly IR before emitting textual assembly.
+`w2` compiles a single C source file (subset) into a macOS Mach‑O executable using the system toolchain for preprocessing and final assembly. Internally it implements: lexing, parsing, semantic validation (name resolution + type checking), a three‑address code (TAC) IR called *Tacky*, and a backend-specific assembly IR before emitting textual assembly.
 
 Pipeline (one file at a time):
 ```
 source.c ──(gcc -E -P)──> source.i ──lex──> Tokens ──parse──> AST ──validate──> Typed AST
-          ──tacky::generate──> Tacky IR ──code::generate──> Assembly IR ──code::emit──> .s
+          ──tacky::generate──> Tacky IR ──backend::generate──> Assembly IR ──backend::emit──> .s
           ──(gcc assemble+link)──> executable (or object with --compile)
 ```
 ### Mermaid Pipeline Diagram
@@ -42,7 +42,7 @@ flowchart LR
    class A,B,C,D,D1,D2,D3,E,F1,F2,F3,F4,G,H,I,J phase;
    class Preprocessing,Validation,Codegen sub;
 ```
-Optional flags (`--lex`, `--parse`, `--validate`, `--tacky`, `--codegen`, `--emitcode`, `--compile`) allow early termination; `--debug` prints the artifact of each finished phase.
+Optional flags (`--lex`, `--parse`, `--validate`, `--tacky`, `--codegen`, `--emitcode`, `--compile`) allow early termination; `--target x86_64|arm64` selects backend (default host arch); `--debug` prints the artifact of each finished phase.
 
 ---
 ## 2. Supported C Subset
@@ -64,7 +64,9 @@ Not yet supported: pointers, arrays, structs, enums, floats, initializer lists, 
 | `validate.rs` | Three passes: name resolution (unique renaming & linkage), loop labeling, type checking & implicit conversion insertion. Maintains symbol/ backend tables. |
 | `convert.rs` | Type promotion / implicit cast helpers and static initializer evaluation. |
 | `tacky.rs` | Generates TAC (Tacky IR) from validated AST; introduces temporaries, control‑flow labels, lowers high‑level constructs. Adds static variable definitions from symbol table. |
-| `code.rs` | Low‑level assembly IR generation + fixups + stack layout + emission of Mach‑O assembly text. |
+| `code.rs` | x86‑64 backend: assembly IR generation + fixups + stack layout + Mach‑O text emission. |
+| `arm64.rs` | arm64 backend: stack-slot assignment + AArch64 lowering + Mach‑O text emission. |
+| `target.rs` | Target selection (`x86_64`/`arm64`) and host-arch detection. |
 | `utils.rs` | GCC subprocess helpers (preprocess, assemble/link), temp/label name generation, mini counter. |
 | `main.rs` | CLI driver orchestrating phases and flag‑controlled early exits. |
 
@@ -174,7 +176,14 @@ StaticVariable(name, global, Type, StaticInit)
 Tacky is still typed (via symbol table) but does not encode types directly in instruction variants; width decisions deferred to `code.rs` using `val_type`.
 
 ---
-## 9. Assembly IR (`code.rs`)
+## 9. Backend Overview
+`w2` supports two backend targets on macOS:
+- `x86_64`: implemented in `code.rs` (existing assembly IR + fixup passes).
+- `arm64`: implemented in `arm64.rs` (AArch64 lowering with stack-slot addressing helpers).
+
+Backend selection is done by `--target x86_64|arm64` in `main.rs`; when omitted, host architecture is used.
+
+## 10. Assembly IR (`code.rs`, x86_64 backend)
 ### IR Layers
 ```
 Operand::{Imm(i64), Reg(Register), Pseudo(Identifier), Stack(offset), Data(label)}
@@ -204,7 +213,7 @@ Definition::{FunDef(Function( name, global, stackSize, instructions? )),
 - 32‑bit ALU ops intentionally used (`movl`, `addl`, etc.) relying on zero/sign extension semantics of x86‑64 for long results where needed via explicit `SignExtend` / `Truncate` tacky instructions → `movsx` / size‑restricted `movl` sequence.
 
 ---
-## 10. Control Flow Lowering Patterns
+## 11. Control Flow Lowering Patterns
 | Construct | Pattern |
 |-----------|---------|
 | `if (c) S;` | test c → `JumpIfZero end` → body → `Label end` |
@@ -217,32 +226,32 @@ Definition::{FunDef(Function( name, global, stackSize, instructions? )),
 | `c ? x : y` | eval c → `JumpIfZero else` → eval x → copy → `Jump end` → `Label else` → eval y → copy → `Label end` |
 
 ---
-## 11. Calling Convention
+## 12. Calling Convention
 - Arguments 0..5 in `%rdi,%rsi,%rdx,%rcx,%r8,%r9` (32‑bit views for int). Remaining pushed (8 bytes each).
 - Caller ensures 16‑byte alignment prior to `call` (padding logic in `convert_function_call`).
 - Return value always in `%rax` (moved out to pseudo destination variable immediately).
 - No callee-saved register management yet—compiler avoids using non-volatile registers besides `%rbp` frame anchor.
 
 ---
-## 12. Static & Global Variables
+## 13. Static & Global Variables
 - File scope declarations processed during validation: track linkage (extern vs static) and initialization state (initial / tentative / no initializer).
 - During `tacky::generate`, symbol table scanned and each static (or tentative) becomes a `VarDef` with either explicit initializer or zero.
 - Emission chooses `.data` vs `.bss` depending on whether initializer is zero. Alignment derived from size (4 for int / 8 for long).
 
 ---
-## 13. Memory & Stack Layout
+## 14. Memory & Stack Layout
 - Base pointer `%rbp` saved; locals and temporaries assigned negative offsets aligned to 16 bytes overall.
 - Temporaries sized as 4 bytes (int semantics) unless sign–extension indicates 64‑bit usage at instruction level.
 - No spill optimization or live range analysis; every pseudo gets a distinct slot.
 
 ---
-## 14. Temporary Naming & Labels
+## 15. Temporary Naming & Labels
 - `temp_name(prefix)` produces `prefix.N` monotonically increasing (thread‑local counter).
 - Loop labeling: for each loop a unique base (e.g. `while.17`), with synthetic `continue_...` / `break_...` labels via `mklabel`.
 - Predictable names help debugging intermediate dumps with `--debug`.
 
 ---
-## 15. Error Handling Strategy
+## 16. Error Handling Strategy
 - Use `anyhow::Result<T>`; unrecoverable semantic issues reported with `bail!(...)`.
 - Phases are fail‑fast; later phases assume invariants:
   - All identifiers resolved to unique backend names.
@@ -250,7 +259,7 @@ Definition::{FunDef(Function( name, global, stackSize, instructions? )),
   - Only valid lvalues appear on LHS of assignment or compound assignment.
 
 ---
-## 16. CLI Driver (`main.rs`)
+## 17. CLI Driver (`main.rs`)
 Flag processing sets boolean stage gates. For each input file:
 1. Preprocess to `.i`
 2. Lex → optional exit
@@ -261,9 +270,10 @@ Flag processing sets boolean stage gates. For each input file:
 7. Emit assembly → optional exit
 8. Assemble+link (`--compile` chooses object vs executable)
 `--debug` prints each artifact struct/enum debug representation.
+`--target` controls backend selection; if omitted, `main.rs` infers host architecture.
 
 ---
-## 17. Testing Harness
+## 18. Testing Harness
 - Upstream chapter tests live in the `writing-a-c-compiler-tests` git submodule.
 - Setup/update helpers are in `cargo xtask`: `cargo xtask test-init`, `cargo xtask test-update`, `cargo xtask test-status`.
 - `cargo xtask test` wraps upstream `writing-a-c-compiler-tests/test_compiler` runner.
@@ -271,7 +281,7 @@ Flag processing sets boolean stage gates. For each input file:
 - Stage names correlate to CLI flags (minus leading dashes).
 
 ---
-## 18. Extension Checklist
+## 19. Extension Checklist
 When adding a new language feature/operator:
 1. Lexer: add token + regex (ensure precedence table updated if operator).
 2. Parser: accept new token in factor/unary/binary logic; update AST variants if needed.
@@ -288,7 +298,7 @@ For new data types (e.g., pointers):
 - Adjust `val_type`, static initializer logic, and comparison semantics
 
 ---
-## 19. Limitations & Future Work
+## 20. Limitations & Future Work
 - No pointer / array / struct support
 - No constant folding or dead code elimination
 - Very naive register allocation (all temps on stack)
@@ -300,7 +310,7 @@ For new data types (e.g., pointers):
 Potential future enhancements: pointer arithmetic, basic SSA or liveness + register allocation, constant folding, richer type system, debug info emission, improved error messages with source spans.
 
 ---
-## 20. Glossary
+## 21. Glossary
 - **AST**: Abstract Syntax Tree representing parsed high-level constructs.
 - **Tacky (TAC)**: Three‑Address Code intermediate representation; linear, low‑level, still typed via symbol table.
 - **Pseudo (Operand)**: Placeholder symbolic location before stack slot or global resolution.
@@ -309,7 +319,7 @@ Potential future enhancements: pointer arithmetic, basic SSA or liveness + regis
 - **Fixup**: Transformation pass cleaning invalid memory operations or assigning storage.
 
 ---
-## 21. Quick Data Structure Reference
+## 22. Quick Data Structure Reference
 ```
 Token::{Identifier(String), Constant(String), ... , PlusAssign, ... , Eot}
 Type::{Int, Long, FunType(Vec<Type>, Box<Type>), None}

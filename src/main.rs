@@ -4,8 +4,8 @@
 //!
 //! # Summary
 //!
-//! Given one C file on the command line, create an x86 executable. GCC is doing the
-//! work of preprocessing and compiling the x86 assembly language. All the lexing, parsing,
+//! Given one C file on the command line, create a macOS executable. GCC is doing the
+//! work of preprocessing and compiling the generated assembly language. All the lexing, parsing,
 //! and assembly language creation is done by this program, w2.
 //!
 //! # Explaination
@@ -22,13 +22,16 @@ use std::fs;
 use std::path::PathBuf;
 use std::process;
 
+mod arm64;
 mod code;
 mod convert;
 mod lex;
 mod parse;
 mod tacky;
+mod target;
 mod utils;
 mod validate;
+use target::Target;
 
 #[derive(Debug, Default)]
 struct Opts {
@@ -40,6 +43,7 @@ struct Opts {
     codegen:  bool,
     emitcode: bool,
     compile:  bool,
+    target:   Option<Target>,
     files:    Vec<PathBuf>
 }
 
@@ -51,25 +55,46 @@ fn usage(msg: &str) -> ! {
 #[rustfmt::skip]
 fn main() -> Result<()> {
     let mut opts = Opts::default();
+    let args = env::args().skip(1).collect::<Vec<_>>();
+    let mut index = 0;
 
-    for option in env::args().skip(1) {
-        if option.starts_with("-") {
-            match option.trim_start_matches('-') {
-                "debug"    | "d" => opts.debug    = true,
-                "lex"      | "l" => opts.lex      = true,
-                "parse"    | "p" => opts.parse    = true,
-                "validate" | "v" => opts.validate = true,
-                "tacky"    | "t" => opts.tacky    = true,
-                "codegen"  | "g" => opts.codegen  = true,
-                "emitcode" | "e" => opts.emitcode = true,
-                // Keep gcc-compatible `-c` semantics for object-file output.
-                "compile"  | "m" | "c" => opts.compile  = true,
-                unknown => usage(&format!("Unknown option: {unknown:?}")),
-            }
-        } else {
+    while index < args.len() {
+        let option = &args[index];
+        if !option.starts_with("-") {
             opts.files.push(option.into());
+            index += 1;
+            continue;
         }
+
+        if let Some(target) = option.strip_prefix("--target=") {
+            opts.target = Some(Target::parse(target)?);
+            index += 1;
+            continue;
+        }
+
+        match option.trim_start_matches('-') {
+            "debug"    | "d" => opts.debug    = true,
+            "lex"      | "l" => opts.lex      = true,
+            "parse"    | "p" => opts.parse    = true,
+            "validate" | "v" => opts.validate = true,
+            "tacky"    | "t" => opts.tacky    = true,
+            "codegen"  | "g" => opts.codegen  = true,
+            "emitcode" | "e" => opts.emitcode = true,
+            "compile"  | "m" | "c" => opts.compile  = true,
+            "target" => {
+                if index + 1 >= args.len() {
+                    usage("Missing value for --target");
+                }
+                opts.target = Some(Target::parse(&args[index + 1])?);
+                index += 1;
+            },
+            unknown => usage(&format!("Unknown option: {unknown:?}")),
+        }
+        index += 1;
     }
+
+    let target = opts.target.unwrap_or(Target::host()?);
+    opts.target = Some(target);
 
     if opts.debug {
         println!("{opts:?}");
@@ -80,20 +105,20 @@ fn main() -> Result<()> {
     }
 
     for file in &opts.files {
-        run(&opts, file)?;
+        run(&opts, file, target)?;
     }
 
     Ok(())
 }
 
-fn run(opts: &Opts, file: &PathBuf) -> Result<()> {
+fn run(opts: &Opts, file: &PathBuf, target: Target) -> Result<()> {
     if let Some(extension) = file.extension()
         && extension != "c"
     {
         bail!("Expected C source file: {file:?}");
     }
 
-    let file_i = utils::preprocess(file)?;
+    let file_i = utils::preprocess(file, target)?;
     let source = fs::read_to_string(&file_i)?;
 
     let tokens = lex::lex(&source)?;
@@ -128,29 +153,42 @@ fn run(opts: &Opts, file: &PathBuf) -> Result<()> {
         process::exit(0);
     }
 
-    let code = code::generate(&tacky)?;
+    let code = match target {
+        Target::X86_64 => {
+            let code = code::generate(&tacky)?;
+            if opts.debug {
+                println!("code: {:?}\n", code);
+            }
+            if opts.codegen {
+                process::exit(0);
+            }
+            code::emit(&code)?
+        },
+        Target::Arm64 => {
+            let code = arm64::generate(&tacky)?;
+            if opts.debug {
+                println!("code: {:?}\n", code);
+            }
+            if opts.codegen {
+                process::exit(0);
+            }
+            arm64::emit(&code)?
+        }
+    };
     if opts.debug {
-        println!("code: {:?}\n", code);
-    }
-    if opts.codegen {
-        process::exit(0);
-    }
-
-    let assembly = code::emit(&code)?;
-    if opts.debug {
-        println!("assembly:\n{assembly}\n");
+        println!("assembly:\n{code}\n");
     }
     if opts.emitcode {
         process::exit(0);
     }
 
     let file_s = file_i.with_extension("s");
-    fs::write(&file_s, &assembly)?;
+    fs::write(&file_s, &code)?;
 
     if opts.compile {
-        utils::create_object_file(&file_s)?;
+        utils::create_object_file(&file_s, target)?;
     } else {
-        utils::create_executable(&file_s)?;
+        utils::create_executable(&file_s, target)?;
     }
 
     Ok(())

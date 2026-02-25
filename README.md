@@ -1,8 +1,8 @@
-# w2 — a tiny C compiler for macOS x86-64
+# w2 — a tiny C compiler for macOS
 
-A small C compiler inspired by Nora Sandler’s “Writing a C Compiler”. It compiles a single C source file into macOS x86-64 assembly and links it via the system toolchain.
+A small C compiler inspired by Nora Sandler’s “Writing a C Compiler”. It compiles a single C source file into macOS assembly and links it via the system toolchain.
 
-Pipeline: preprocess C ➜ lex ➜ parse ➜ validate ➜ generate three-address code (TAC, "tacky") ➜ generate x86-64 assembly ➜ assemble/link with `gcc`.
+Pipeline: preprocess C ➜ lex ➜ parse ➜ validate ➜ generate three-address code (TAC, "tacky") ➜ generate backend assembly (`x86_64` or `arm64`) ➜ assemble/link with `gcc`.
 
 ## Requirements
 - macOS with Command Line Tools (`gcc`/`clang`) available on PATH
@@ -10,7 +10,8 @@ Pipeline: preprocess C ➜ lex ➜ parse ➜ validate ➜ generate three-address
 - Rust toolchain with Cargo (edition 2024)
 - For running the test suite: Python 3 (used by the upstream test harness)
 
-Target platform: macOS x86-64 (Mach-O syntax, underscore-prefixed symbols). On Apple Silicon, assembling/running x86-64 binaries may require Rosetta and passing `-arch x86_64` (the current driver does not add that flag).
+Targets: macOS `x86_64` and macOS `arm64` (Mach-O syntax, underscore-prefixed symbols).
+By default, `w2` picks the host architecture backend automatically. You can override it with `--target x86_64` or `--target arm64`.
 
 ## Installation
 This project does not publish binary releases. Clone the repository and build locally:
@@ -48,6 +49,7 @@ Common flags (you can combine with `--debug` to print the data at each step):
 - `--codegen`   Stop after lowering TAC to internal assembly IR
 - `--emitcode`  Stop after emitting text assembly (prints if `--debug`)
 - `--compile`   Produce an object file (`.o`) instead of an executable
+- `--target`    Select backend target (`x86_64` or `arm64`)
 - `--debug`     Print stage artifacts as they are produced
 
 Examples:
@@ -60,6 +62,9 @@ target/debug/w2 --debug --parse examples/hello.c
 
 # Generate assembly and write file.s, then link to produce an executable
 target/debug/w2 examples/hello.c
+
+# Force the arm64 backend on any host
+target/debug/w2 --target arm64 examples/hello.c
 ```
 
 Notes:
@@ -90,6 +95,8 @@ Options:
 - `GOTO` (optional): set to `1` to include `goto`/labeled-statement extra-credit tests
 - `SWITCH` (optional): set to `1` to include `switch`/`case`/`default` extra-credit tests
 - `-v`/`--verbose` (optional): verbose harness output
+- `--latest-only` (optional): run tests from selected chapter only
+- `--target` (optional): pass `x86_64` or `arm64` to the compiler under test
 - `-f`/`--failfast` (optional): stop on the first test failure
 - `-b`/`--backtrace` (optional): force `RUST_BACKTRACE=1` while running the harness
 - `--increment` (optional): include `++`/`--` extra-credit tests
@@ -98,11 +105,14 @@ Options:
 
 Examples:
 ```bash
-# Run chapter 10 tests end-to-end
-cargo xtask test --chapter 10
+# Run chapter-10-only tests end-to-end
+cargo xtask test --chapter 10 --latest-only
 
 # Run chapter 10 tests at the parse stage only
 cargo xtask test --chapter 10 --stage parse
+
+# Run chapter-10-only codegen tests with explicit arm64 backend
+cargo xtask test --chapter 10 --latest-only --stage codegen --target arm64
 
 # Stop on first failure
 cargo xtask test --chapter 10 --failfast
@@ -138,5 +148,5 @@ cargo test
 
 ## Troubleshooting
 - `gcc: command not found` / preprocessing fails: Install Xcode Command Line Tools.
-- Assembler errors on Apple Silicon: the backend emits x86-64; consider testing on x86-64 macOS or adapting the build to pass `-arch x86_64` and run under Rosetta.
+- Cross-architecture linker errors (mixing `arm64` and `x86_64` objects): compile all participating files for the same target architecture.
 - If tests fail early, build the compiler first (`cargo build`) and confirm `target/debug/w2` exists.

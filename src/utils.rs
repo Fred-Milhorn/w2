@@ -6,6 +6,7 @@
 //! Most of these functions are very specific to the w2 C compiler,
 //! with run_cli() being an exception.
 
+use crate::target::Target;
 use anyhow::{Context, Result, anyhow};
 use std::cell::Cell;
 use std::path::PathBuf;
@@ -38,11 +39,18 @@ pub fn mklabel(prefix: &str, suffix: &str) -> String {
 ///
 /// We turn off the file/line numbering in the .i output since we can't
 /// parse that (yet), and aren't otherwise tracking line numbers.
-pub fn preprocess(file_c: &PathBuf) -> Result<PathBuf> {
+pub fn preprocess(file_c: &PathBuf, target: Target) -> Result<PathBuf> {
     let file_i = file_c.with_extension("i");
 
     let mut preprocess = Command::new("gcc");
-    preprocess.arg("-E").arg("-P").arg(file_c).arg("-o").arg(&file_i);
+    preprocess
+        .arg("-arch")
+        .arg(target.arch_flag())
+        .arg("-E")
+        .arg("-P")
+        .arg(file_c)
+        .arg("-o")
+        .arg(&file_i);
     run_cli(&mut preprocess)?;
 
     Ok(file_i)
@@ -50,11 +58,11 @@ pub fn preprocess(file_c: &PathBuf) -> Result<PathBuf> {
 
 /// Assemble the .s file into an executable file.
 #[allow(dead_code)]
-pub fn create_executable(file_s: &PathBuf) -> Result<PathBuf> {
+pub fn create_executable(file_s: &PathBuf, target: Target) -> Result<PathBuf> {
     let file_exe = file_s.with_extension("");
 
     let mut assemble = Command::new("gcc");
-    assemble.arg(file_s).arg("-o").arg(&file_exe);
+    assemble.arg("-arch").arg(target.arch_flag()).arg(file_s).arg("-o").arg(&file_exe);
     run_cli(&mut assemble)?;
 
     Ok(file_exe)
@@ -62,11 +70,11 @@ pub fn create_executable(file_s: &PathBuf) -> Result<PathBuf> {
 
 /// Assemble the .s file into an object file.
 #[allow(dead_code)]
-pub fn create_object_file(file_s: &PathBuf) -> Result<PathBuf> {
+pub fn create_object_file(file_s: &PathBuf, target: Target) -> Result<PathBuf> {
     let file_o = file_s.with_extension("o");
 
     let mut assemble = Command::new("gcc");
-    assemble.arg("-c").arg(file_s).arg("-o").arg(&file_o);
+    assemble.arg("-arch").arg(target.arch_flag()).arg("-c").arg(file_s).arg("-o").arg(&file_o);
     run_cli(&mut assemble)?;
 
     Ok(file_o)
