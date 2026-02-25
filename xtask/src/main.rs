@@ -6,14 +6,17 @@ type TaskResult<T> = Result<T, String>;
 
 #[derive(Debug, Default)]
 struct TestOptions {
-    chapter:   Option<String>,
-    stage:     Option<String>,
-    failfast:  bool,
-    backtrace: bool,
-    verbose:   bool,
-    increment: bool,
-    goto:      bool,
-    switch:    bool
+    chapter:       Option<String>,
+    stage:         Option<String>,
+    failfast:      bool,
+    backtrace:     bool,
+    verbose:       bool,
+    increment:     bool,
+    goto:          bool,
+    switch:        bool,
+    extra:         bool,
+    debug:         bool,
+    compiler_args: Vec<String>
 }
 
 fn print_help() {
@@ -31,17 +34,22 @@ fn print_help() {
 
 fn print_test_help() {
     eprintln!(
-        "Usage: cargo xtask test [OPTIONS]\n\
+        "Usage: cargo xtask test [OPTIONS] [-- COMPILER_OPTIONS...]\n\
          Options:\n\
-           -h, --help       Show this help message\n\
-           -v, --verbose    Enable verbose mode for harness output\n\
-           -f, --failfast   Stop on first test failure\n\
-           -b, --backtrace  Force RUST_BACKTRACE=1 while running harness\n\
-           --increment       Include tests for increment/decrement operators\n\
-           --goto            Include tests for goto and labeled statements\n\
-           --switch          Include tests for switch statements\n\
-           -c, --chapter N  Chapter to run (or CHAPTER env var)\n\
-           -s, --stage S    Stage to run (or STAGE env var)"
+           -h, --help          Show this help message\n\
+           -v, --verbose       Enable verbose mode for harness output\n\
+           -f, --failfast      Stop on first test failure\n\
+           -b, --backtrace     Force RUST_BACKTRACE=1 while running harness\n\
+           -d, --debug         Pass --debug to compiler under test\n\
+           -i, --increment     Include tests for increment/decrement operators\n\
+           -g, --goto          Include tests for goto and labeled statements\n\
+           -w, --switch        Include tests for switch statements\n\
+           -x, --extra-credit  Include all extra-credit tests\n\
+           -c, --chapter N     Chapter to run (or CHAPTER env var)\n\
+           -s, --stage S       Stage to run (or STAGE env var)\n\
+         \n\
+         Pass additional compiler options after `--`.\n\
+         Example: cargo xtask test --chapter 3 -- --debug --lex"
     );
 }
 
@@ -84,6 +92,10 @@ fn parse_test_args(raw_args: &[String]) -> TaskResult<(TestOptions, bool)> {
 
     while ix < raw_args.len() {
         match raw_args[ix].as_str() {
+            "--" => {
+                opts.compiler_args.extend(raw_args[ix + 1..].iter().cloned());
+                break;
+            },
             "-h" | "--help" => {
                 help_requested = true;
                 ix += 1;
@@ -100,15 +112,19 @@ fn parse_test_args(raw_args: &[String]) -> TaskResult<(TestOptions, bool)> {
                 opts.backtrace = true;
                 ix += 1;
             },
-            "--increment" => {
+            "-d" | "--debug" => {
+                opts.debug = true;
+                ix += 1;
+            },
+            "-i" | "--increment" => {
                 opts.increment = true;
                 ix += 1;
             },
-            "--goto" => {
+            "-g" | "--goto" => {
                 opts.goto = true;
                 ix += 1;
             },
-            "--switch" => {
+            "-w" | "--switch" => {
                 opts.switch = true;
                 ix += 1;
             },
@@ -140,6 +156,10 @@ fn parse_test_args(raw_args: &[String]) -> TaskResult<(TestOptions, bool)> {
                     return Err("stage name is required".to_string());
                 }
                 opts.stage = Some(stage);
+                ix += 1;
+            },
+            "-x" | "--extra-credit" => {
+                opts.extra = true;
                 ix += 1;
             },
             unknown => {
@@ -174,7 +194,7 @@ fn parse_test_args(raw_args: &[String]) -> TaskResult<(TestOptions, bool)> {
 }
 
 fn run_test(raw_args: &[String]) -> TaskResult<i32> {
-    let (opts, help_requested) = parse_test_args(raw_args)?;
+    let (mut opts, help_requested) = parse_test_args(raw_args)?;
     if help_requested {
         print_test_help();
         return Ok(0);
@@ -222,6 +242,9 @@ fn run_test(raw_args: &[String]) -> TaskResult<i32> {
     if opts.increment {
         command.arg("--increment");
     }
+    if opts.extra {
+        command.arg("--extra-credit");
+    }
     if opts.goto {
         command.arg("--goto");
     }
@@ -231,6 +254,10 @@ fn run_test(raw_args: &[String]) -> TaskResult<i32> {
     if opts.backtrace {
         command.env("RUST_BACKTRACE", "1");
     }
+    if opts.debug {
+        opts.compiler_args.push("--debug".to_string());
+    }
+    command.args(&opts.compiler_args);
 
     run_and_forward_exit(&mut command)
 }
@@ -285,5 +312,81 @@ fn main() -> ExitCode {
             eprintln!("{err}");
             ExitCode::from(1)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_test_args;
+
+    fn args(raw: &[&str]) -> Vec<String> {
+        raw.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn parse_test_args_accepts_debug_flag() {
+        let (opts, help) = parse_test_args(&args(&["--chapter", "3", "--debug"])).unwrap();
+        assert!(!help);
+        assert_eq!(opts.chapter, Some("3".to_string()));
+        assert!(opts.debug);
+        assert!(opts.compiler_args.is_empty());
+    }
+
+    #[test]
+    fn parse_test_args_collects_compiler_passthrough_after_delimiter() {
+        let (opts, help) = parse_test_args(&args(&["--chapter", "3", "--", "--debug"])).unwrap();
+        assert!(!help);
+        assert_eq!(opts.chapter, Some("3".to_string()));
+        assert!(!opts.debug);
+        assert_eq!(opts.compiler_args, vec!["--debug".to_string()]);
+    }
+
+    #[test]
+    fn parse_test_args_supports_debug_and_passthrough_together() {
+        let (opts, help) =
+            parse_test_args(&args(&["--chapter", "3", "--debug", "--", "--lex", "--emitcode"]))
+                .unwrap();
+        assert!(!help);
+        assert!(opts.debug);
+        assert_eq!(opts.compiler_args, vec!["--lex".to_string(), "--emitcode".to_string()]);
+    }
+
+    #[test]
+    fn parse_test_args_rejects_unknown_flag_before_delimiter() {
+        let err = parse_test_args(&args(&["--chapter", "3", "--bogus"])).unwrap_err();
+        assert_eq!(err, "Invalid option for test: --bogus");
+    }
+
+    #[test]
+    fn parse_test_args_accepts_unknown_flag_after_delimiter() {
+        let (opts, help) =
+            parse_test_args(&args(&["--chapter", "3", "--", "--bogus", "--x"])).unwrap();
+        assert!(!help);
+        assert_eq!(opts.compiler_args, vec!["--bogus".to_string(), "--x".to_string()]);
+    }
+
+    #[test]
+    fn parse_test_args_preserves_existing_flags() {
+        let (opts, help) = parse_test_args(&args(&[
+            "--chapter",
+            "8",
+            "--stage=validate",
+            "--failfast",
+            "--verbose",
+            "--goto",
+            "--switch",
+            "--increment",
+            "--extra-credit"
+        ]))
+        .unwrap();
+        assert!(!help);
+        assert_eq!(opts.chapter, Some("8".to_string()));
+        assert_eq!(opts.stage, Some("validate".to_string()));
+        assert!(opts.failfast);
+        assert!(opts.verbose);
+        assert!(opts.goto);
+        assert!(opts.switch);
+        assert!(opts.increment);
+        assert!(opts.extra);
     }
 }
