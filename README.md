@@ -129,11 +129,34 @@ cargo xtask test --chapter 6 --goto
 # Include switch/case/default extra-credit tests
 cargo xtask test --chapter 8 --switch
 
+# Include all extra-credit tests
+cargo xtask test --chapter 8 --extra-credit
+
 # Combine feature flags
 cargo xtask test --chapter 8 --goto --switch
 
 # Environment-variable form also works
-CHAPTER=10 STAGE=parse FAILFAST=1 RUST_BACKTRACE=1 INCREMENT=1 GOTO=1 SWITCH=1 cargo xtask test
+CHAPTER=10 STAGE=parse FAILFAST=1 RUST_BACKTRACE=1 EXTRA_CREDIT=1 cargo xtask test
+```
+
+Run architecture-agnostic subset tests (Rust-native harness, no Python runner):
+- Limited to chapters 1-10
+- Excludes tests with upstream `assembly_libs` dependencies
+- Includes compile-stage checks and run-stage behavior checks for C-only tests
+- Without `--latest-only`, runs cumulatively in chapter order (`chapter_1` through selected chapter)
+
+```bash
+# Run portable chapter-10-only behavior/compile subset
+cargo xtask test-portable --chapter 10 --latest-only
+
+# Portable parse-stage subset
+cargo xtask test-portable --chapter 10 --latest-only --stage parse
+
+# Portable cumulative parse-stage run (chapters 1..10 in order)
+cargo xtask test-portable --chapter 10 --stage parse
+
+# Portable run with all extra-credit tests
+cargo xtask test-portable --chapter 10 --latest-only --extra-credit
 ```
 
 For compiler-internal checks (non-chapter tests), run:

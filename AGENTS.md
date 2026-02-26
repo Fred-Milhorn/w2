@@ -43,7 +43,8 @@ When extending the language or backend, keep these guardrails:
 ## Runtime and tests
 - Build: `cargo build`.
 - Run compiler: `target/debug/w2 [--target <x86_64|arm64>] [--debug] [--lex|--parse|--validate|--tacky|--codegen|--emitcode|--compile] file.c`.
-- Chapter tests: initialize the chapter-test submodule with `cargo xtask test-init`, then run tests via `cargo xtask test --chapter <n> [--latest-only] [--stage <stage>] [--target <x86_64|arm64>] [--failfast] [--backtrace] [--increment] [--goto] [--switch]`.
+- Chapter tests: initialize the chapter-test submodule with `cargo xtask test-init`, then run tests via `cargo xtask test --chapter <n> [--latest-only] [--stage <stage>] [--target <x86_64|arm64>] [--failfast] [--backtrace] [--extra-credit] [--increment] [--goto] [--switch]`.
+- Portable subset harness (no Python driver): `cargo xtask test-portable --chapter <n<=10> [--latest-only] [--stage <stage>] [--target <x86_64|arm64>] [--failfast] [--backtrace] [--extra-credit] [--increment] [--goto] [--switch]` (without `--latest-only`, runs chapters `1..N` in chapter order).
 - Fast internal tests: `cargo test`.
 - Test layering: prefer adding internal unit tests for parser/validator/codegen behavior and use chapter tests as end-to-end coverage.
 
