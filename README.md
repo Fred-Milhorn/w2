@@ -159,6 +159,12 @@ cargo xtask test-portable --chapter 10 --stage parse
 cargo xtask test-portable --chapter 10 --latest-only --extra-credit
 ```
 
+### Portable Harness Scope
+- `test-portable` is intentionally capped at chapters 1-10.
+- It models the architecture-agnostic subset needed for backend-independent compiler behavior checks.
+- Later chapters add upstream-harness assumptions (for example, additional optimization/stage flows and other harness semantics) that are not fully mirrored yet in `test-portable`.
+- Running beyond chapter 10 without those behaviors can produce misleading results (false pass/fail outcomes).
+
 For compiler-internal checks (non-chapter tests), run:
 ```bash
 cargo test

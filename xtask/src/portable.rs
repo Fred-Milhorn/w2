@@ -336,7 +336,8 @@ fn load_data(opts: &PortableOptions) -> TaskResult<HarnessData> {
     let chapter = opts.chapter.ok_or_else(|| "Chapter is required.".to_string())?;
     if chapter == 0 || chapter > 10 {
         return Err(format!(
-            "test-portable currently supports chapters 1 through 10. Got chapter {chapter}."
+            "test-portable currently supports chapters 1 through 10. Got chapter {chapter}. \
+             See README.md section \"Portable Harness Scope\" for details."
         ));
     }
 
