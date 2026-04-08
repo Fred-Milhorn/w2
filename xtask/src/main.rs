@@ -9,17 +9,19 @@ type TaskResult<T> = Result<T, String>;
 
 #[derive(Debug, Default)]
 struct TestOptions {
-    chapter:      Option<String>,
-    stage:        Option<String>,
-    latest_only:  bool,
-    target:       Option<String>,
-    failfast:     bool,
-    backtrace:    bool,
-    verbose:      u8,
-    extra_credit: bool,
-    increment:    bool,
-    goto:         bool,
-    switch:       bool
+    chapter:       Option<String>,
+    stage:         Option<String>,
+    latest_only:   bool,
+    target:        Option<String>,
+    failfast:      bool,
+    backtrace:     bool,
+    verbose:       u8,
+    extra_credit:  bool,
+    increment:     bool,
+    goto:          bool,
+    switch:        bool,
+    debug:         bool,
+    compiler_args: Vec<String>
 }
 
 fn print_help() {
@@ -38,12 +40,13 @@ fn print_help() {
 
 fn print_test_help() {
     eprintln!(
-        "Usage: cargo xtask test [OPTIONS]\n\
+        "Usage: cargo xtask test [OPTIONS] [-- COMPILER_OPTIONS...]\n\
          Options:\n\
            -h, --help       Show this help message\n\
            -v, --verbose    Enable verbose mode (repeat for more detail)\n\
            --latest-only    Run tests for the selected chapter only\n\
            --target T       Pass backend target to compiler under test (x86_64|arm64)\n\
+           -d, --debug      Pass --debug to compiler under test\n\
            -f, --failfast   Stop on first test failure\n\
            -b, --backtrace  Force RUST_BACKTRACE=1 while running harness\n\
            --extra-credit    Include all extra-credit tests\n\
@@ -51,7 +54,10 @@ fn print_test_help() {
            --goto            Include tests for goto and labeled statements\n\
            --switch          Include tests for switch statements\n\
            -c, --chapter N  Chapter to run (or CHAPTER env var)\n\
-           -s, --stage S    Stage to run (or STAGE env var)"
+           -s, --stage S    Stage to run (or STAGE env var)\n\
+         \n\
+         Pass additional compiler options after `--`.\n\
+         Example: cargo xtask test --chapter 3 -- --debug --lex"
     );
 }
 
@@ -277,6 +283,10 @@ fn parse_test_args(raw_args: &[String]) -> TaskResult<(TestOptions, bool)> {
 
     while ix < raw_args.len() {
         match raw_args[ix].as_str() {
+            "--" => {
+                opts.compiler_args.extend(raw_args[ix + 1..].iter().cloned());
+                break;
+            },
             "-h" | "--help" => {
                 help_requested = true;
                 ix += 1;
@@ -310,6 +320,10 @@ fn parse_test_args(raw_args: &[String]) -> TaskResult<(TestOptions, bool)> {
             },
             "-b" | "--backtrace" => {
                 opts.backtrace = true;
+                ix += 1;
+            },
+            "-d" | "--debug" => {
+                opts.debug = true;
                 ix += 1;
             },
             "--extra-credit" => {
@@ -393,7 +407,7 @@ fn parse_test_args(raw_args: &[String]) -> TaskResult<(TestOptions, bool)> {
 }
 
 fn run_test(raw_args: &[String]) -> TaskResult<i32> {
-    let (opts, help_requested) = parse_test_args(raw_args)?;
+    let (mut opts, help_requested) = parse_test_args(raw_args)?;
     if help_requested {
         print_test_help();
         return Ok(0);
@@ -458,8 +472,16 @@ fn run_test(raw_args: &[String]) -> TaskResult<i32> {
     if opts.backtrace {
         command.env("RUST_BACKTRACE", "1");
     }
-    if let Some(target) = opts.target {
-        command.arg("--").arg("--target").arg(target);
+    if let Some(target) = opts.target.take() {
+        opts.compiler_args.push("--target".to_string());
+        opts.compiler_args.push(target);
+    }
+    if opts.debug {
+        opts.compiler_args.push("--debug".to_string());
+    }
+    if !opts.compiler_args.is_empty() {
+        command.arg("--");
+        command.args(&opts.compiler_args);
     }
 
     if opts.verbose == 0 {
@@ -534,8 +556,13 @@ fn main() -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::{
-        UnitOutcome, parse_unittest_case_line, parse_unittest_ran_line, parse_unittest_stream
+        UnitOutcome, parse_test_args, parse_unittest_case_line, parse_unittest_ran_line,
+        parse_unittest_stream
     };
+
+    fn args(raw: &[&str]) -> Vec<String> {
+        raw.iter().map(|s| s.to_string()).collect()
+    }
 
     #[test]
     fn parses_unittest_case_line() {
@@ -564,5 +591,47 @@ mod tests {
         assert_eq!(tests[0].outcome, UnitOutcome::Ok);
         assert!(passthrough.is_empty());
         assert_eq!(duration.as_deref(), Some("0.123s"));
+    }
+
+    #[test]
+    fn parse_test_args_accepts_debug_flag() {
+        let (opts, help) = parse_test_args(&args(&["--chapter", "3", "--debug"])).unwrap();
+        assert!(!help);
+        assert_eq!(opts.chapter, Some("3".to_string()));
+        assert!(opts.debug);
+        assert!(opts.compiler_args.is_empty());
+    }
+
+    #[test]
+    fn parse_test_args_collects_compiler_passthrough_after_delimiter() {
+        let (opts, help) = parse_test_args(&args(&["--chapter", "3", "--", "--debug"])).unwrap();
+        assert!(!help);
+        assert_eq!(opts.chapter, Some("3".to_string()));
+        assert!(!opts.debug);
+        assert_eq!(opts.compiler_args, vec!["--debug".to_string()]);
+    }
+
+    #[test]
+    fn parse_test_args_supports_debug_and_passthrough_together() {
+        let (opts, help) =
+            parse_test_args(&args(&["--chapter", "3", "--debug", "--", "--lex", "--emitcode"]))
+                .unwrap();
+        assert!(!help);
+        assert!(opts.debug);
+        assert_eq!(opts.compiler_args, vec!["--lex".to_string(), "--emitcode".to_string()]);
+    }
+
+    #[test]
+    fn parse_test_args_rejects_unknown_flag_before_delimiter() {
+        let err = parse_test_args(&args(&["--chapter", "3", "--bogus"])).unwrap_err();
+        assert_eq!(err, "Invalid option for test: --bogus");
+    }
+
+    #[test]
+    fn parse_test_args_accepts_unknown_flag_after_delimiter() {
+        let (opts, help) =
+            parse_test_args(&args(&["--chapter", "3", "--", "--bogus", "--x"])).unwrap();
+        assert!(!help);
+        assert_eq!(opts.compiler_args, vec!["--bogus".to_string(), "--x".to_string()]);
     }
 }
