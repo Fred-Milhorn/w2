@@ -23,15 +23,44 @@ pub fn convert_to(expression: Expression, exp_type: Type) -> Expression {
     Expression::Cast(exp_type.clone(), Box::new(expression), exp_type.clone())
 }
 
+fn const_value(numeric: &Const) -> i64 {
+    match numeric {
+        Const::ConstInt(number) | Const::ConstLong(number) => *number
+    }
+}
+
+fn cast_const(numeric: &Const, target: &Type) -> Result<Const> {
+    let value = const_value(numeric);
+    let casted = match target {
+        Type::Int => Const::ConstInt(value as i32 as i64),
+        Type::Long => Const::ConstLong(value),
+        _ => bail!("cast_const: unexpected target type {target:?}")
+    };
+
+    Ok(casted)
+}
+
+fn eval_static_const(expression: &Expression) -> Result<Const> {
+    match expression {
+        Expression::Constant(numeric, _) => Ok(numeric.clone()),
+        Expression::Cast(target, inner, _) => {
+            let numeric = eval_static_const(inner)?;
+            cast_const(&numeric, target)
+        },
+        _ => bail!("typecheck_local_variable: Non-constant initializer on local static variable")
+    }
+}
+
 pub fn convert_static_init(
     name: &str, var_type: &Type, init: &Option<Expression>
 ) -> Result<InitialValue> {
     let initial_value = match init {
-        Some(Expression::Constant(numeric, _)) => match numeric {
-            Const::ConstInt(number) => InitialValue::Initial(StaticInit::IntInit(*number)),
-            Const::ConstLong(number) => match var_type {
-                Type::Int => InitialValue::Initial(StaticInit::IntInit(*number)),
-                Type::Long => InitialValue::Initial(StaticInit::LongInit(*number)),
+        Some(expression) => {
+            let numeric = eval_static_const(expression)?;
+            let value = const_value(&numeric);
+            match var_type {
+                Type::Int => InitialValue::Initial(StaticInit::IntInit(value as i32 as i64)),
+                Type::Long => InitialValue::Initial(StaticInit::LongInit(value)),
                 _ => {
                     bail!(
                         "convert_static_init: unexpected type {var_type:?} for variable {name:?}"
@@ -45,11 +74,6 @@ pub fn convert_static_init(
             _ => {
                 bail!("convert_static_init: unexpected type {var_type:?} for variable {name:?}");
             }
-        },
-        _ => {
-            bail!(
-                "typecheck_local_variable: Non-constant initializer on local static variable: {name:?}"
-            );
         }
     };
 
@@ -106,6 +130,24 @@ mod tests {
     #[test]
     fn convert_static_init_defaults_to_zero() {
         let initial = convert_static_init("x", &Type::Long, &None).expect("expected success");
+        assert_eq!(initial, InitialValue::Initial(StaticInit::LongInit(0)));
+    }
+
+    #[test]
+    fn convert_static_init_truncates_long_to_int_width() {
+        let init = Some(Expression::Constant(Const::ConstLong(8_589_934_592), Type::Long));
+        let initial = convert_static_init("x", &Type::Int, &init).expect("expected success");
+        assert_eq!(initial, InitialValue::Initial(StaticInit::IntInit(0)));
+    }
+
+    #[test]
+    fn convert_static_init_respects_constant_casts() {
+        let init = Some(Expression::Cast(
+            Type::Int,
+            Box::new(Expression::Constant(Const::ConstLong(8_589_934_592), Type::Long)),
+            Type::Int
+        ));
+        let initial = convert_static_init("x", &Type::Long, &init).expect("expected success");
         assert_eq!(initial, InitialValue::Initial(StaticInit::LongInit(0)));
     }
 

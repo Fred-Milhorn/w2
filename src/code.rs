@@ -6,7 +6,9 @@ use crate::convert::val_type;
 use crate::parse;
 use crate::parse::Identifier;
 use crate::tacky;
-use crate::validate::{BACKEND, BackendSymbol, IdentAttrs, SYMBOLS, StaticInit, get_backend};
+use crate::validate::{
+    BACKEND, BackendSymbol, IdentAttrs, SYMBOLS, StaticInit, get_backend, get_symbol
+};
 
 use anyhow::Result;
 use std::collections::HashMap;
@@ -467,19 +469,11 @@ fn tacky_to_assembly(instruction: &tacky::Instruction) -> Result<Instructions> {
             instructions.push(Instruction::Jmp(target.to_string()));
         },
         tacky::Instruction::JumpIfZero(val, target) => {
-            instructions.push(Instruction::Cmp(
-                AssemblyType::Longword,
-                Operand::Imm(0),
-                val.into()
-            ));
+            instructions.push(Instruction::Cmp(val_type(val)?, Operand::Imm(0), val.into()));
             instructions.push(Instruction::JmpCC(ConditionCode::E, target.to_string()));
         },
         tacky::Instruction::JumpIfNotZero(val, target) => {
-            instructions.push(Instruction::Cmp(
-                AssemblyType::Longword,
-                Operand::Imm(0),
-                val.into()
-            ));
+            instructions.push(Instruction::Cmp(val_type(val)?, Operand::Imm(0), val.into()));
             instructions.push(Instruction::JmpCC(ConditionCode::NE, target.to_string()));
         },
         tacky::Instruction::Copy(src, dst) => {
@@ -572,14 +566,20 @@ fn fixup_pseudo(function: &Function) -> Function {
     let depth: &mut i32 = &mut stack_depth;
 
     let mut fixup = |operand: &Operand| -> Operand {
-        const TMPSIZE: i32 = 4;
         if let Operand::Pseudo(identifier) = operand {
             match get_backend(identifier) {
                 Some(BackendSymbol::ObjEntry(_, true)) => Operand::Data(identifier.to_string()),
                 _ => match pseudo_map.get(identifier) {
                     Some(offset) => Operand::Stack(*offset),
                     None => {
-                        *depth -= TMPSIZE;
+                        let size = match get_symbol(identifier) {
+                            Some(entry) => match entry.symbol_type {
+                                parse::Type::Long => 8,
+                                _ => 4
+                            },
+                            None => 4
+                        };
+                        *depth -= size;
                         pseudo_map.insert(identifier.to_string(), *depth);
                         Operand::Stack(*depth)
                     }
@@ -634,11 +634,40 @@ fn fixup_invalid(function: &Function) -> Function {
                     && matches!($dst, Operand::Stack(_) | Operand::Data(_))
             };
         }
+        let is_large_imm =
+            |number: i64| -> bool { number < i32::MIN as i64 || number > i32::MAX as i64 };
         let mut instructions = Instructions::new();
 
         for instruction in block {
             match instruction {
+                Instruction::Mov(AssemblyType::Quadword, Operand::Imm(number), dst)
+                    if !matches!(dst, Operand::Reg(_)) =>
+                {
+                    instructions.push(Instruction::Mov(
+                        AssemblyType::Quadword,
+                        Operand::Imm(*number),
+                        Operand::Reg(Register::R10)
+                    ));
+                    instructions.push(Instruction::Mov(
+                        AssemblyType::Quadword,
+                        Operand::Reg(Register::R10),
+                        dst.clone()
+                    ));
+                },
                 Instruction::Cmp(atype, src, Operand::Imm(number)) => {
+                    let fixed_src = match (atype, src) {
+                        (AssemblyType::Quadword, Operand::Imm(src_number))
+                            if is_large_imm(*src_number) =>
+                        {
+                            instructions.push(Instruction::Mov(
+                                AssemblyType::Quadword,
+                                Operand::Imm(*src_number),
+                                Operand::Reg(Register::R10)
+                            ));
+                            Operand::Reg(Register::R10)
+                        },
+                        _ => src.clone()
+                    };
                     instructions.push(Instruction::Mov(
                         atype.clone(),
                         Operand::Imm(*number),
@@ -646,8 +675,22 @@ fn fixup_invalid(function: &Function) -> Function {
                     ));
                     instructions.push(Instruction::Cmp(
                         atype.clone(),
-                        src.clone(),
+                        fixed_src,
                         Operand::Reg(Register::R11)
+                    ));
+                },
+                Instruction::Cmp(AssemblyType::Quadword, Operand::Imm(number), dst)
+                    if is_large_imm(*number) =>
+                {
+                    instructions.push(Instruction::Mov(
+                        AssemblyType::Quadword,
+                        Operand::Imm(*number),
+                        Operand::Reg(Register::R11)
+                    ));
+                    instructions.push(Instruction::Cmp(
+                        AssemblyType::Quadword,
+                        Operand::Reg(Register::R11),
+                        dst.clone()
                     ));
                 },
                 Instruction::Cmp(atype, src, dst) if invalid!(src, dst) => {
@@ -674,13 +717,34 @@ fn fixup_invalid(function: &Function) -> Function {
                         dst.clone()
                     ));
                 },
-                Instruction::Movsx(src, dst) if invalid!(src, dst) => {
-                    instructions.push(Instruction::Mov(
-                        AssemblyType::Longword,
-                        src.clone(),
+                Instruction::Movsx(src, dst)
+                    if matches!(src, Operand::Imm(_)) || !matches!(dst, Operand::Reg(_)) =>
+                {
+                    let fixed_src = if matches!(src, Operand::Imm(_)) {
+                        instructions.push(Instruction::Mov(
+                            AssemblyType::Longword,
+                            src.clone(),
+                            Operand::Reg(Register::R11)
+                        ));
+                        Operand::Reg(Register::R11)
+                    } else {
+                        src.clone()
+                    };
+                    let fixed_dst = if matches!(dst, Operand::Reg(_)) {
+                        dst.clone()
+                    } else {
                         Operand::Reg(Register::R10)
-                    ));
-                    instructions.push(Instruction::Movsx(Operand::Reg(Register::R10), dst.clone()));
+                    };
+
+                    instructions.push(Instruction::Movsx(fixed_src, fixed_dst.clone()));
+
+                    if !matches!(dst, Operand::Reg(_)) {
+                        instructions.push(Instruction::Mov(
+                            AssemblyType::Quadword,
+                            fixed_dst,
+                            dst.clone()
+                        ));
+                    }
                 },
                 Instruction::Idiv(atype, Operand::Imm(number)) => {
                     instructions.push(Instruction::Mov(
@@ -690,6 +754,57 @@ fn fixup_invalid(function: &Function) -> Function {
                     ));
                     instructions
                         .push(Instruction::Idiv(atype.clone(), Operand::Reg(Register::R10)));
+                },
+                Instruction::Push(Operand::Imm(number)) if is_large_imm(*number) => {
+                    instructions.push(Instruction::Mov(
+                        AssemblyType::Quadword,
+                        Operand::Imm(*number),
+                        Operand::Reg(Register::R10)
+                    ));
+                    instructions.push(Instruction::Push(Operand::Reg(Register::R10)));
+                },
+                Instruction::Binary(
+                    operator,
+                    AssemblyType::Quadword,
+                    Operand::Imm(number),
+                    dst
+                ) if is_large_imm(*number)
+                    && !matches!(
+                        operator,
+                        BinaryOperator::Leftshift | BinaryOperator::Rightshift
+                    ) =>
+                {
+                    instructions.push(Instruction::Mov(
+                        AssemblyType::Quadword,
+                        Operand::Imm(*number),
+                        Operand::Reg(Register::R10)
+                    ));
+
+                    if matches!(operator, BinaryOperator::Mult) {
+                        instructions.push(Instruction::Mov(
+                            AssemblyType::Quadword,
+                            dst.clone(),
+                            Operand::Reg(Register::R11)
+                        ));
+                        instructions.push(Instruction::Binary(
+                            BinaryOperator::Mult,
+                            AssemblyType::Quadword,
+                            Operand::Reg(Register::R10),
+                            Operand::Reg(Register::R11)
+                        ));
+                        instructions.push(Instruction::Mov(
+                            AssemblyType::Quadword,
+                            Operand::Reg(Register::R11),
+                            dst.clone()
+                        ));
+                    } else {
+                        instructions.push(Instruction::Binary(
+                            operator.clone(),
+                            AssemblyType::Quadword,
+                            Operand::Reg(Register::R10),
+                            dst.clone()
+                        ));
+                    }
                 },
                 Instruction::Binary(BinaryOperator::Mult, atype, src, dst) => {
                     instructions.push(Instruction::Mov(
@@ -823,10 +938,12 @@ impl Operand {
 }
 
 impl UnaryOperator {
-    fn name(&self) -> &str {
-        match self {
-            UnaryOperator::Neg => "negl",
-            UnaryOperator::Not => "notl"
+    fn name(&self, atype: &AssemblyType) -> &str {
+        match (self, atype) {
+            (UnaryOperator::Neg, AssemblyType::Longword) => "negl",
+            (UnaryOperator::Neg, AssemblyType::Quadword) => "negq",
+            (UnaryOperator::Not, AssemblyType::Longword) => "notl",
+            (UnaryOperator::Not, AssemblyType::Quadword) => "notq"
         }
     }
 }
@@ -856,22 +973,68 @@ fn emit_instruction(code: &mut String, instruction: &Instruction) -> Result<()> 
     match instruction {
         Instruction::Push(src) => writeln!(code, "    push    {}", src.r8b())?,
         Instruction::Call(name) => writeln!(code, "    call    _{name}")?,
-        Instruction::Cmp(_atype, src, dst) => {
-            writeln!(code, "    cmpl    {}, {}", src.r4b(), dst.r4b())?
+        Instruction::Cmp(atype, src, dst) => {
+            let mnemonic = match atype {
+                AssemblyType::Longword => "cmpl",
+                AssemblyType::Quadword => "cmpq"
+            };
+            let src_name = match atype {
+                AssemblyType::Longword => src.r4b(),
+                AssemblyType::Quadword => src.r8b()
+            };
+            let dst_name = match atype {
+                AssemblyType::Longword => dst.r4b(),
+                AssemblyType::Quadword => dst.r8b()
+            };
+            writeln!(code, "    {mnemonic}    {src_name}, {dst_name}")?
         },
         Instruction::Jmp(label) => writeln!(code, "    jmp     L{}", label)?,
         Instruction::Label(label) => writeln!(code, "L{}:", label)?,
         Instruction::JmpCC(cc, label) => writeln!(code, "    j{}     L{}", cc.name(), label)?,
         Instruction::SetCC(cc, dst) => writeln!(code, "    set{}   {}", cc.name(), dst.r1b())?,
-        Instruction::Mov(_atype, src, dst) => {
-            writeln!(code, "    movl    {}, {}", src.r4b(), dst.r4b())?
+        Instruction::Mov(atype, src, dst) => {
+            let mnemonic = match (atype, src, dst) {
+                (AssemblyType::Quadword, Operand::Imm(number), Operand::Reg(_))
+                    if *number < i32::MIN as i64 || *number > i32::MAX as i64 =>
+                {
+                    "movabsq"
+                },
+                (AssemblyType::Longword, _, _) => "movl",
+                (AssemblyType::Quadword, _, _) => "movq"
+            };
+            let src_name = match atype {
+                AssemblyType::Longword => src.r4b(),
+                AssemblyType::Quadword => src.r8b()
+            };
+            let dst_name = match atype {
+                AssemblyType::Longword => dst.r4b(),
+                AssemblyType::Quadword => dst.r8b()
+            };
+            writeln!(code, "    {mnemonic}    {src_name}, {dst_name}")?
         },
-        Instruction::Unary(operator, _atype, dst) => {
-            writeln!(code, "    {}    {}", operator.name(), dst.r4b())?
+        Instruction::Unary(operator, atype, dst) => {
+            let dst_name = match atype {
+                AssemblyType::Longword => dst.r4b(),
+                AssemblyType::Quadword => dst.r8b()
+            };
+            writeln!(code, "    {}    {}", operator.name(atype), dst_name)?
         },
         Instruction::Ret => writeln!(code, "    movq    %rbp, %rsp\n    popq    %rbp\n    ret")?,
-        Instruction::Cdq(_atype) => writeln!(code, "    cdq")?,
-        Instruction::Idiv(_atype, dst) => writeln!(code, "    idivl   {}", dst.r4b())?,
+        Instruction::Cdq(atype) => match atype {
+            AssemblyType::Longword => writeln!(code, "    cdq")?,
+            AssemblyType::Quadword => writeln!(code, "    cqo")?
+        },
+        Instruction::Idiv(atype, dst) => {
+            let mnemonic = match atype {
+                AssemblyType::Longword => "idivl",
+                AssemblyType::Quadword => "idivq"
+            };
+            let dst_name = match atype {
+                AssemblyType::Longword => dst.r4b(),
+                AssemblyType::Quadword => dst.r8b()
+            };
+            writeln!(code, "    {mnemonic}   {dst_name}")?
+        },
         Instruction::Binary(operator, atype, src, dst) => {
             let mnemonic = emit_binary_mnemonic(operator, atype);
             let src_name = match operator {
@@ -981,6 +1144,67 @@ mod tests {
     }
 
     #[test]
+    fn emit_instruction_uses_quadword_mnemonics() {
+        let mut code = String::new();
+        emit_instruction(
+            &mut code,
+            &Instruction::Mov(
+                super::AssemblyType::Quadword,
+                Operand::Imm(7),
+                Operand::Reg(Register::AX)
+            )
+        )
+        .expect("quadword mov should succeed");
+        emit_instruction(
+            &mut code,
+            &Instruction::Cmp(
+                super::AssemblyType::Quadword,
+                Operand::Reg(Register::R10),
+                Operand::Reg(Register::AX)
+            )
+        )
+        .expect("quadword cmp should succeed");
+        emit_instruction(
+            &mut code,
+            &Instruction::Unary(
+                super::UnaryOperator::Neg,
+                super::AssemblyType::Quadword,
+                Operand::Reg(Register::AX)
+            )
+        )
+        .expect("quadword unary should succeed");
+        emit_instruction(&mut code, &Instruction::Cdq(super::AssemblyType::Quadword))
+            .expect("quadword sign extension should succeed");
+        emit_instruction(
+            &mut code,
+            &Instruction::Idiv(super::AssemblyType::Quadword, Operand::Reg(Register::R10))
+        )
+        .expect("quadword divide should succeed");
+
+        assert!(code.contains("movq"));
+        assert!(code.contains("cmpq"));
+        assert!(code.contains("negq"));
+        assert!(code.contains("cqo"));
+        assert!(code.contains("idivq"));
+    }
+
+    #[test]
+    fn emit_instruction_uses_movabs_for_large_quadword_immediates() {
+        let mut code = String::new();
+        emit_instruction(
+            &mut code,
+            &Instruction::Mov(
+                super::AssemblyType::Quadword,
+                Operand::Imm(8_589_934_592),
+                Operand::Reg(Register::R10)
+            )
+        )
+        .expect("large immediate move should succeed");
+
+        assert!(code.contains("movabsq"));
+    }
+
+    #[test]
     fn fixup_pseudo_rewrites_movsx_operands() {
         let function = Function(
             "f".to_string(),
@@ -1011,13 +1235,164 @@ mod tests {
         let Function(_, _, _, body) = fixed;
         let instructions = body.expect("expected instructions");
         assert_eq!(instructions, vec![
+            Instruction::Movsx(Operand::Stack(-4), Operand::Reg(Register::R10)),
+            Instruction::Mov(
+                super::AssemblyType::Quadword,
+                Operand::Reg(Register::R10),
+                Operand::Stack(-8)
+            )
+        ]);
+    }
+
+    #[test]
+    fn fixup_invalid_rewrites_immediate_to_stack_movsx() {
+        let function = Function(
+            "f".to_string(),
+            true,
+            0,
+            Some(vec![Instruction::Movsx(Operand::Imm(-3), Operand::Stack(-8))])
+        );
+
+        let fixed = fixup_invalid(&function);
+        let Function(_, _, _, body) = fixed;
+        let instructions = body.expect("expected instructions");
+        assert_eq!(instructions, vec![
             Instruction::Mov(
                 super::AssemblyType::Longword,
-                Operand::Stack(-4),
+                Operand::Imm(-3),
+                Operand::Reg(Register::R11)
+            ),
+            Instruction::Movsx(Operand::Reg(Register::R11), Operand::Reg(Register::R10)),
+            Instruction::Mov(
+                super::AssemblyType::Quadword,
+                Operand::Reg(Register::R10),
+                Operand::Stack(-8)
+            )
+        ]);
+    }
+
+    #[test]
+    fn fixup_invalid_rewrites_large_quadword_immediate_move_to_stack() {
+        let function = Function(
+            "f".to_string(),
+            true,
+            0,
+            Some(vec![Instruction::Mov(
+                super::AssemblyType::Quadword,
+                Operand::Imm(17_179_869_189),
+                Operand::Stack(-8)
+            )])
+        );
+
+        let fixed = fixup_invalid(&function);
+        let Function(_, _, _, body) = fixed;
+        let instructions = body.expect("expected instructions");
+        assert_eq!(instructions, vec![
+            Instruction::Mov(
+                super::AssemblyType::Quadword,
+                Operand::Imm(17_179_869_189),
                 Operand::Reg(Register::R10)
             ),
-            Instruction::Movsx(Operand::Reg(Register::R10), Operand::Stack(-8))
+            Instruction::Mov(
+                super::AssemblyType::Quadword,
+                Operand::Reg(Register::R10),
+                Operand::Stack(-8)
+            )
         ]);
+    }
+
+    #[test]
+    fn fixup_invalid_rewrites_large_quadword_immediate_cmp() {
+        let function = Function(
+            "f".to_string(),
+            true,
+            0,
+            Some(vec![Instruction::Cmp(
+                super::AssemblyType::Quadword,
+                Operand::Imm(8_589_934_592),
+                Operand::Stack(-8)
+            )])
+        );
+
+        let fixed = fixup_invalid(&function);
+        let Function(_, _, _, body) = fixed;
+        let instructions = body.expect("expected instructions");
+        assert_eq!(instructions, vec![
+            Instruction::Mov(
+                super::AssemblyType::Quadword,
+                Operand::Imm(8_589_934_592),
+                Operand::Reg(Register::R11)
+            ),
+            Instruction::Cmp(
+                super::AssemblyType::Quadword,
+                Operand::Reg(Register::R11),
+                Operand::Stack(-8)
+            )
+        ]);
+    }
+
+    #[test]
+    fn fixup_invalid_rewrites_large_quadword_immediate_binary() {
+        let function = Function(
+            "f".to_string(),
+            true,
+            0,
+            Some(vec![Instruction::Binary(
+                super::BinaryOperator::Add,
+                super::AssemblyType::Quadword,
+                Operand::Imm(4_294_967_290),
+                Operand::Stack(-8)
+            )])
+        );
+
+        let fixed = fixup_invalid(&function);
+        let Function(_, _, _, body) = fixed;
+        let instructions = body.expect("expected instructions");
+        assert_eq!(instructions, vec![
+            Instruction::Mov(
+                super::AssemblyType::Quadword,
+                Operand::Imm(4_294_967_290),
+                Operand::Reg(Register::R10)
+            ),
+            Instruction::Binary(
+                super::BinaryOperator::Add,
+                super::AssemblyType::Quadword,
+                Operand::Reg(Register::R10),
+                Operand::Stack(-8)
+            )
+        ]);
+    }
+
+    #[test]
+    fn fixup_pseudo_allocates_quadword_slots_for_long_pseudos() {
+        crate::validate::add_symbol("long_src.test", crate::validate::Symbol {
+            symbol_type: parse::Type::Long,
+            attrs:       crate::validate::IdentAttrs::Local
+        });
+        crate::validate::add_symbol("long_dst.test", crate::validate::Symbol {
+            symbol_type: parse::Type::Long,
+            attrs:       crate::validate::IdentAttrs::Local
+        });
+
+        let function = Function(
+            "f".to_string(),
+            true,
+            0,
+            Some(vec![Instruction::Mov(
+                super::AssemblyType::Quadword,
+                Operand::Pseudo("long_src.test".to_string()),
+                Operand::Pseudo("long_dst.test".to_string())
+            )])
+        );
+
+        let fixed = fixup_pseudo(&function);
+        let Function(_, _, _, body) = fixed;
+        let instructions = body.expect("expected instructions");
+        assert_eq!(instructions, vec![Instruction::Mov(
+            super::AssemblyType::Quadword,
+            Operand::Stack(-8),
+            Operand::Stack(-16)
+        )]);
     }
 
     #[test]
