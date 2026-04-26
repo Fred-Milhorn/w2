@@ -1,6 +1,9 @@
 use std::env;
+use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
+
+mod portable;
 
 type TaskResult<T> = Result<T, String>;
 
@@ -8,13 +11,14 @@ type TaskResult<T> = Result<T, String>;
 struct TestOptions {
     chapter:       Option<String>,
     stage:         Option<String>,
+    latest_only:   bool,
     failfast:      bool,
     backtrace:     bool,
-    verbose:       bool,
+    verbose:       u8,
+    extra_credit:  bool,
     increment:     bool,
     goto:          bool,
     switch:        bool,
-    extra:         bool,
     debug:         bool,
     compiler_args: Vec<String>
 }
@@ -24,6 +28,7 @@ fn print_help() {
         "Usage: cargo xtask <command> [options]\n\
          Commands:\n\
            test          Run chapter tests\n\
+           test-portable Run architecture-agnostic subset without Python harness\n\
            test-init     Initialize chapter-test submodule\n\
            test-update   Update chapter-test submodule pointer\n\
            test-status   Show chapter-test submodule status\n\
@@ -37,14 +42,15 @@ fn print_test_help() {
         "Usage: cargo xtask test [OPTIONS] [-- COMPILER_OPTIONS...]\n\
          Options:\n\
            -h, --help          Show this help message\n\
-           -v, --verbose       Enable verbose mode for harness output\n\
+           -v, --verbose       Enable verbose mode (repeat for more detail)\n\
+           --latest-only       Run tests for the selected chapter only\n\
+           -d, --debug         Pass --debug to compiler under test\n\
            -f, --failfast      Stop on first test failure\n\
            -b, --backtrace     Force RUST_BACKTRACE=1 while running harness\n\
-           -d, --debug         Pass --debug to compiler under test\n\
+           -x, --extra-credit  Include all extra-credit tests\n\
            -i, --increment     Include tests for increment/decrement operators\n\
            -g, --goto          Include tests for goto and labeled statements\n\
            -w, --switch        Include tests for switch statements\n\
-           -x, --extra-credit  Include all extra-credit tests\n\
            -c, --chapter N     Chapter to run (or CHAPTER env var)\n\
            -s, --stage S       Stage to run (or STAGE env var)\n\
          \n\
@@ -85,6 +91,189 @@ fn run_and_forward_exit(command: &mut Command) -> TaskResult<i32> {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum UnitOutcome {
+    Ok,
+    Failed,
+    Ignored
+}
+
+impl UnitOutcome {
+    fn as_cargo_word(&self) -> &'static str {
+        match self {
+            UnitOutcome::Ok => "ok",
+            UnitOutcome::Failed => "FAILED",
+            UnitOutcome::Ignored => "ignored"
+        }
+    }
+
+    fn as_colored_cargo_word(&self, use_color: bool) -> String {
+        let word = self.as_cargo_word();
+        if !use_color {
+            return word.to_string();
+        }
+        match self {
+            UnitOutcome::Ok => format!("\x1b[32m{word}\x1b[0m"),
+            UnitOutcome::Failed => format!("\x1b[31m{word}\x1b[0m"),
+            UnitOutcome::Ignored => word.to_string()
+        }
+    }
+}
+
+#[derive(Debug)]
+struct AdaptedCaseLine {
+    name:    String,
+    outcome: UnitOutcome
+}
+
+#[derive(Debug, Default)]
+struct AdaptedSummary {
+    total:    usize,
+    passed:   usize,
+    failed:   usize,
+    ignored:  usize,
+    duration: Option<String>
+}
+
+fn color_enabled_for_stdout() -> bool {
+    if env::var_os("NO_COLOR").is_some() {
+        return false;
+    }
+    if matches!(env::var("CLICOLOR"), Ok(value) if value == "0") {
+        return false;
+    }
+    std::io::stdout().is_terminal()
+}
+
+fn parse_unittest_case_line(line: &str) -> Option<AdaptedCaseLine> {
+    let (lhs, rhs) = line.rsplit_once(" ... ")?;
+    let name = lhs.split_once(" (").map(|(prefix, _)| prefix).unwrap_or(lhs).trim();
+    if name.is_empty() {
+        return None;
+    }
+
+    let status = rhs.trim();
+    let outcome = if status == "ok" {
+        UnitOutcome::Ok
+    } else if status == "FAIL" || status == "ERROR" {
+        UnitOutcome::Failed
+    } else if status.starts_with("skipped") {
+        UnitOutcome::Ignored
+    } else {
+        return None;
+    };
+
+    Some(AdaptedCaseLine { name: name.to_string(), outcome })
+}
+
+fn parse_unittest_ran_line(line: &str) -> Option<(usize, String)> {
+    let trimmed = line.trim();
+    let body = trimmed.strip_prefix("Ran ")?;
+    let (count_str, duration) = if let Some(parts) = body.split_once(" tests in ") {
+        parts
+    } else {
+        body.split_once(" test in ")?
+    };
+    let total = count_str.parse::<usize>().ok()?;
+    Some((total, duration.trim().to_string()))
+}
+
+fn parse_unittest_stream(stream: &str) -> (Vec<AdaptedCaseLine>, Vec<String>, Option<String>) {
+    let mut tests = Vec::<AdaptedCaseLine>::new();
+    let mut passthrough = Vec::<String>::new();
+    let mut duration = None::<String>;
+
+    for line in stream.lines() {
+        if let Some(test_line) = parse_unittest_case_line(line) {
+            tests.push(test_line);
+            continue;
+        }
+        if let Some((_, parsed_duration)) = parse_unittest_ran_line(line) {
+            duration = Some(parsed_duration);
+            continue;
+        }
+
+        let trimmed = line.trim();
+        if trimmed.is_empty()
+            || trimmed == "OK"
+            || trimmed.starts_with("FAILED")
+            || (!trimmed.is_empty() && trimmed.chars().all(|ch| ch == '-'))
+            || (!trimmed.is_empty()
+                && trimmed.chars().all(|ch| matches!(ch, '.' | 'F' | 'E' | 's')))
+        {
+            continue;
+        }
+        passthrough.push(line.to_string());
+    }
+
+    (tests, passthrough, duration)
+}
+
+fn emit_cargo_style_output(stdout: &str, stderr: &str, exit_code: i32) -> i32 {
+    let use_color = color_enabled_for_stdout();
+    let (stdout_tests, stdout_passthrough, stdout_duration) = parse_unittest_stream(stdout);
+    let (stderr_tests, stderr_passthrough, stderr_duration) = parse_unittest_stream(stderr);
+
+    let (tests, mut passthrough, duration, other_stream) =
+        if stderr_tests.len() > stdout_tests.len() {
+            (stderr_tests, stderr_passthrough, stderr_duration, Some(stdout.to_string()))
+        } else {
+            (stdout_tests, stdout_passthrough, stdout_duration, Some(stderr.to_string()))
+        };
+
+    if tests.is_empty() {
+        print!("{stdout}");
+        eprint!("{stderr}");
+        return exit_code;
+    }
+
+    let mut summary = AdaptedSummary { total: tests.len(), ..AdaptedSummary::default() };
+    summary.duration = duration.or_else(|| Some("0.00s".to_string()));
+
+    println!("running {} tests", summary.total);
+    for test in &tests {
+        match test.outcome {
+            UnitOutcome::Ok => summary.passed += 1,
+            UnitOutcome::Failed => summary.failed += 1,
+            UnitOutcome::Ignored => summary.ignored += 1
+        }
+        println!("test {} ... {}", test.name, test.outcome.as_colored_cargo_word(use_color));
+    }
+
+    if let Some(extra) = other_stream {
+        for line in extra.lines() {
+            if line.trim().is_empty() {
+                continue;
+            }
+            passthrough.push(line.to_string());
+        }
+    }
+
+    if !passthrough.is_empty() {
+        println!();
+        for line in passthrough {
+            println!("{line}");
+        }
+    }
+
+    let duration_str = summary.duration.unwrap_or_else(|| "0.00s".to_string());
+    let result_word = if summary.failed == 0 { "ok" } else { "FAILED" };
+    let result_word = if use_color {
+        if summary.failed == 0 {
+            format!("\x1b[32m{result_word}\x1b[0m")
+        } else {
+            format!("\x1b[31m{result_word}\x1b[0m")
+        }
+    } else {
+        result_word.to_string()
+    };
+    println!(
+        "\ntest result: {result_word}. {} passed; {} failed; {} ignored; 0 measured; 0 filtered out; finished in {}",
+        summary.passed, summary.failed, summary.ignored, duration_str
+    );
+    exit_code
+}
+
 fn parse_test_args(raw_args: &[String]) -> TaskResult<(TestOptions, bool)> {
     let mut opts = TestOptions::default();
     let mut help_requested = false;
@@ -101,7 +290,11 @@ fn parse_test_args(raw_args: &[String]) -> TaskResult<(TestOptions, bool)> {
                 ix += 1;
             },
             "-v" | "--verbose" => {
-                opts.verbose = true;
+                opts.verbose = opts.verbose.saturating_add(1);
+                ix += 1;
+            },
+            "--latest-only" => {
+                opts.latest_only = true;
                 ix += 1;
             },
             "-f" | "--failfast" => {
@@ -114,6 +307,10 @@ fn parse_test_args(raw_args: &[String]) -> TaskResult<(TestOptions, bool)> {
             },
             "-d" | "--debug" => {
                 opts.debug = true;
+                ix += 1;
+            },
+            "-x" | "--extra-credit" => {
+                opts.extra_credit = true;
                 ix += 1;
             },
             "-i" | "--increment" => {
@@ -158,10 +355,6 @@ fn parse_test_args(raw_args: &[String]) -> TaskResult<(TestOptions, bool)> {
                 opts.stage = Some(stage);
                 ix += 1;
             },
-            "-x" | "--extra-credit" => {
-                opts.extra = true;
-                ix += 1;
-            },
             unknown => {
                 return Err(format!("Invalid option for test: {unknown}"));
             }
@@ -188,6 +381,9 @@ fn parse_test_args(raw_args: &[String]) -> TaskResult<(TestOptions, bool)> {
     }
     if !opts.switch {
         opts.switch = truthy_env("SWITCH");
+    }
+    if !opts.extra_credit {
+        opts.extra_credit = truthy_env("EXTRA_CREDIT");
     }
 
     Ok((opts, help_requested))
@@ -229,6 +425,9 @@ fn run_test(raw_args: &[String]) -> TaskResult<i32> {
     let mut command = Command::new(harness);
     command.current_dir(harness_dir);
     command.arg(&compiler).arg("--chapter").arg(chapter);
+    if opts.latest_only {
+        command.arg("--latest-only");
+    }
 
     if let Some(stage) = opts.stage {
         command.arg("--stage").arg(stage);
@@ -236,14 +435,16 @@ fn run_test(raw_args: &[String]) -> TaskResult<i32> {
     if opts.failfast {
         command.arg("--failfast");
     }
-    if opts.verbose {
-        command.arg("--verbose");
+    if opts.verbose > 0 {
+        for _ in 0..(opts.verbose + 1) {
+            command.arg("--verbose");
+        }
+    }
+    if opts.extra_credit {
+        command.arg("--extra-credit");
     }
     if opts.increment {
         command.arg("--increment");
-    }
-    if opts.extra {
-        command.arg("--extra-credit");
     }
     if opts.goto {
         command.arg("--goto");
@@ -257,9 +458,24 @@ fn run_test(raw_args: &[String]) -> TaskResult<i32> {
     if opts.debug {
         opts.compiler_args.push("--debug".to_string());
     }
-    command.args(&opts.compiler_args);
+    if !opts.compiler_args.is_empty() {
+        command.arg("--");
+        command.args(&opts.compiler_args);
+    }
 
-    run_and_forward_exit(&mut command)
+    if opts.verbose == 0 {
+        return run_and_forward_exit(&mut command);
+    }
+
+    match command.output() {
+        Ok(output) => {
+            let code = output.status.code().unwrap_or(1);
+            let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+            let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+            Ok(emit_cargo_style_output(&stdout, &stderr, code))
+        },
+        Err(err) => Err(format!("Failed to run command {:?}: {err}", command))
+    }
 }
 
 fn run_git_submodule(args: &[&str]) -> TaskResult<i32> {
@@ -280,6 +496,7 @@ fn run_main() -> TaskResult<i32> {
     let command = args.remove(0);
     match command.as_str() {
         "test" => run_test(&args),
+        "test-portable" => portable::run(&args),
         "test-init" => run_git_submodule(&[
             "submodule",
             "update",
@@ -317,10 +534,42 @@ fn main() -> ExitCode {
 
 #[cfg(test)]
 mod tests {
-    use super::parse_test_args;
+    use super::{
+        UnitOutcome, parse_test_args, parse_unittest_case_line, parse_unittest_ran_line,
+        parse_unittest_stream
+    };
 
     fn args(raw: &[&str]) -> Vec<String> {
         raw.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn parses_unittest_case_line() {
+        let parsed = parse_unittest_case_line(
+            "test_invalid_parse/missing_type (test_framework.basic.TestChapter1.test_invalid_parse/missing_type) ... ok"
+        )
+        .expect("case line should parse");
+        assert_eq!(parsed.name, "test_invalid_parse/missing_type");
+        assert_eq!(parsed.outcome, UnitOutcome::Ok);
+    }
+
+    #[test]
+    fn parses_unittest_ran_line() {
+        let (total, duration) =
+            parse_unittest_ran_line("Ran 24 tests in 1.695s").expect("ran line should parse");
+        assert_eq!(total, 24);
+        assert_eq!(duration, "1.695s");
+    }
+
+    #[test]
+    fn parses_unittest_stream_case_lines() {
+        let output = "test_valid/foo (suite.case) ... ok\nRan 1 test in 0.123s\nOK\n";
+        let (tests, passthrough, duration) = parse_unittest_stream(output);
+        assert_eq!(tests.len(), 1);
+        assert_eq!(tests[0].name, "test_valid/foo");
+        assert_eq!(tests[0].outcome, UnitOutcome::Ok);
+        assert!(passthrough.is_empty());
+        assert_eq!(duration.as_deref(), Some("0.123s"));
     }
 
     #[test]
@@ -372,6 +621,7 @@ mod tests {
             "8",
             "--stage=validate",
             "--failfast",
+            "--latest-only",
             "--verbose",
             "--goto",
             "--switch",
@@ -383,10 +633,11 @@ mod tests {
         assert_eq!(opts.chapter, Some("8".to_string()));
         assert_eq!(opts.stage, Some("validate".to_string()));
         assert!(opts.failfast);
-        assert!(opts.verbose);
+        assert_eq!(opts.verbose, 1);
+        assert!(opts.latest_only);
         assert!(opts.goto);
         assert!(opts.switch);
         assert!(opts.increment);
-        assert!(opts.extra);
+        assert!(opts.extra_credit);
     }
 }

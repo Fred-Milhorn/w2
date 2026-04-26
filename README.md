@@ -1,8 +1,8 @@
-# w2 — a tiny C compiler for macOS x86-64
+# w2 — a tiny C compiler for macOS
 
-A small C compiler inspired by Nora Sandler’s “Writing a C Compiler”. It compiles a single C source file into macOS x86-64 assembly and links it via the system toolchain.
+A small C compiler inspired by Nora Sandler’s “Writing a C Compiler”. It compiles a single C source file into macOS assembly and links it via the system toolchain.
 
-Pipeline: preprocess C ➜ lex ➜ parse ➜ validate ➜ generate three-address code (TAC, "tacky") ➜ generate x86-64 assembly ➜ assemble/link with `gcc`.
+Pipeline: preprocess C ➜ lex ➜ parse ➜ validate ➜ generate three-address code (TAC, "tacky") ➜ generate x86_64 assembly ➜ assemble/link with `gcc`.
 
 ## Requirements
 - macOS with Command Line Tools (`gcc`/`clang`) available on PATH
@@ -10,7 +10,7 @@ Pipeline: preprocess C ➜ lex ➜ parse ➜ validate ➜ generate three-address
 - Rust toolchain with Cargo (edition 2024)
 - For running the test suite: Python 3 (used by the upstream test harness)
 
-Target platform: macOS x86-64 (Mach-O syntax, underscore-prefixed symbols). On Apple Silicon, assembling/running x86-64 binaries may require Rosetta and passing `-arch x86_64` (the current driver does not add that flag).
+Target: macOS `x86_64` (Mach-O syntax, underscore-prefixed symbols).
 
 ## Installation
 This project does not publish binary releases. Clone the repository and build locally:
@@ -60,6 +60,9 @@ target/debug/w2 --debug --parse examples/hello.c
 
 # Generate assembly and write file.s, then link to produce an executable
 target/debug/w2 examples/hello.c
+
+# Emit assembly text and stop before assembling
+target/debug/w2 --debug --emitcode examples/hello.c
 ```
 
 Notes:
@@ -90,6 +93,7 @@ Options:
 - `GOTO` (optional): set to `1` to include `goto`/labeled-statement extra-credit tests
 - `SWITCH` (optional): set to `1` to include `switch`/`case`/`default` extra-credit tests
 - `-v`/`--verbose` (optional): verbose harness output
+- `--latest-only` (optional): run tests from selected chapter only
 - `-f`/`--failfast` (optional): stop on the first test failure
 - `-b`/`--backtrace` (optional): force `RUST_BACKTRACE=1` while running the harness
 - `--increment` (optional): include `++`/`--` extra-credit tests
@@ -98,8 +102,8 @@ Options:
 
 Examples:
 ```bash
-# Run chapter 10 tests end-to-end
-cargo xtask test --chapter 10
+# Run chapter-10-only tests end-to-end
+cargo xtask test --chapter 10 --latest-only
 
 # Run chapter 10 tests at the parse stage only
 cargo xtask test --chapter 10 --stage parse
@@ -119,12 +123,41 @@ cargo xtask test --chapter 6 --goto
 # Include switch/case/default extra-credit tests
 cargo xtask test --chapter 8 --switch
 
+# Include all extra-credit tests
+cargo xtask test --chapter 8 --extra-credit
+
 # Combine feature flags
 cargo xtask test --chapter 8 --goto --switch
 
 # Environment-variable form also works
-CHAPTER=10 STAGE=parse FAILFAST=1 RUST_BACKTRACE=1 INCREMENT=1 GOTO=1 SWITCH=1 cargo xtask test
+CHAPTER=10 STAGE=parse FAILFAST=1 RUST_BACKTRACE=1 EXTRA_CREDIT=1 cargo xtask test
 ```
+
+Run architecture-agnostic subset tests (Rust-native harness, no Python runner):
+- Limited to chapters 1-10
+- Excludes tests with upstream `assembly_libs` dependencies
+- Includes compile-stage checks and run-stage behavior checks for C-only tests
+- Without `--latest-only`, runs cumulatively in chapter order (`chapter_1` through selected chapter)
+
+```bash
+# Run portable chapter-10-only behavior/compile subset
+cargo xtask test-portable --chapter 10 --latest-only
+
+# Portable parse-stage subset
+cargo xtask test-portable --chapter 10 --latest-only --stage parse
+
+# Portable cumulative parse-stage run (chapters 1..10 in order)
+cargo xtask test-portable --chapter 10 --stage parse
+
+# Portable run with all extra-credit tests
+cargo xtask test-portable --chapter 10 --latest-only --extra-credit
+```
+
+### Portable Harness Scope
+- `test-portable` is intentionally capped at chapters 1-10.
+- It models the architecture-agnostic subset needed for backend-independent compiler behavior checks.
+- Later chapters add upstream-harness assumptions (for example, additional optimization/stage flows and other harness semantics) that are not fully mirrored yet in `test-portable`.
+- Running beyond chapter 10 without those behaviors can produce misleading results (false pass/fail outcomes).
 
 For compiler-internal checks (non-chapter tests), run:
 ```bash
@@ -138,5 +171,4 @@ cargo test
 
 ## Troubleshooting
 - `gcc: command not found` / preprocessing fails: Install Xcode Command Line Tools.
-- Assembler errors on Apple Silicon: the backend emits x86-64; consider testing on x86-64 macOS or adapting the build to pass `-arch x86_64` and run under Rosetta.
 - If tests fail early, build the compiler first (`cargo build`) and confirm `target/debug/w2` exists.

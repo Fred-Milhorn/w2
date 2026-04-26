@@ -42,7 +42,7 @@ pub fn preprocess(file_c: &PathBuf) -> Result<PathBuf> {
     let file_i = file_c.with_extension("i");
 
     let mut preprocess = Command::new("gcc");
-    preprocess.arg("-E").arg("-P").arg(file_c).arg("-o").arg(&file_i);
+    preprocess.arg("-arch").arg("x86_64").arg("-E").arg("-P").arg(file_c).arg("-o").arg(&file_i);
     run_cli(&mut preprocess)?;
 
     Ok(file_i)
@@ -54,7 +54,7 @@ pub fn create_executable(file_s: &PathBuf) -> Result<PathBuf> {
     let file_exe = file_s.with_extension("");
 
     let mut assemble = Command::new("gcc");
-    assemble.arg(file_s).arg("-o").arg(&file_exe);
+    assemble.arg("-arch").arg("x86_64").arg(file_s).arg("-o").arg(&file_exe);
     run_cli(&mut assemble)?;
 
     Ok(file_exe)
@@ -66,7 +66,7 @@ pub fn create_object_file(file_s: &PathBuf) -> Result<PathBuf> {
     let file_o = file_s.with_extension("o");
 
     let mut assemble = Command::new("gcc");
-    assemble.arg("-c").arg(file_s).arg("-o").arg(&file_o);
+    assemble.arg("-arch").arg("x86_64").arg("-c").arg(file_s).arg("-o").arg(&file_o);
     run_cli(&mut assemble)?;
 
     Ok(file_o)

@@ -1042,12 +1042,7 @@ fn typecheck_expression(expression: &Expression) -> Result<Expression> {
         },
         Expression::Cast(target_type, cast_exp, _) => {
             let typed_exp = typecheck_expression(cast_exp)?;
-            let exp_type = typed_exp.get_type();
-            Expression::Cast(
-                target_type.clone(),
-                Box::new(typecheck_expression(cast_exp)?),
-                exp_type
-            )
+            Expression::Cast(target_type.clone(), Box::new(typed_exp), target_type.clone())
         },
         Expression::Constant(const_value, _) => {
             let new_type = match const_value {
@@ -1124,7 +1119,11 @@ fn typecheck_local_variable(declaration: &VariableDeclaration) -> Result<Variabl
                 symbol_type: var_type.clone(),
                 attrs:       IdentAttrs::Local
             });
-            let new_init = init.as_ref().map(typecheck_expression).transpose()?;
+            let new_init = init
+                .as_ref()
+                .map(typecheck_expression)
+                .transpose()?
+                .map(|typed_init| convert_to(typed_init, var_type.clone()));
 
             VariableDeclaration(name.clone(), new_init, var_type.clone(), opt_storage_class.clone())
         }
@@ -1137,16 +1136,13 @@ fn typecheck_file_scope_variable(declaration: &VariableDeclaration) -> Result<Va
     let VariableDeclaration(name, init, var_type, opt_storage_class) = declaration;
 
     let mut initial_value = match init {
-        Some(Expression::Constant(numeric, _)) => match numeric {
-            Const::ConstInt(number) => InitialValue::Initial(StaticInit::IntInit(*number)),
-            Const::ConstLong(number) => InitialValue::Initial(StaticInit::LongInit(*number))
+        Some(_) => {
+            let typed_init = init.as_ref().map(typecheck_expression).transpose()?;
+            convert_static_init(name, var_type, &typed_init)?
         },
         None => match opt_storage_class {
             Some(StorageClass::Extern) => InitialValue::NoInitializer,
             _ => InitialValue::Tentative
-        },
-        _ => {
-            bail!("typecheck_file_scope_variable: non-constant initializer: {init:?}");
         }
     };
     let mut global = !matches!(opt_storage_class, Some(StorageClass::Static));
@@ -1269,7 +1265,9 @@ fn typecheck_function(declaration: &FunctionDeclaration) -> Result<FunctionDecla
 #[cfg(test)]
 mod tests {
     use super::{BACKEND, SYMBOLS, SymbolTable, validate};
-    use crate::parse::{Ast, BlockItem, Declaration, FunctionDeclaration, Statement, parse};
+    use crate::parse::{
+        Ast, BlockItem, Declaration, Expression, FunctionDeclaration, Statement, Type, parse
+    };
 
     fn reset_tables() {
         SYMBOLS.with_borrow_mut(|symbols| *symbols = SymbolTable::new());
@@ -1357,5 +1355,38 @@ mod tests {
     fn accepts_break_in_switch() {
         let source = "int main(void) { int a = 1; switch (a) { case 1: break; default: return 0; } return 1; }";
         parse_and_validate(source).expect("break inside switch should pass");
+    }
+
+    #[test]
+    fn converts_local_initializer_as_if_by_assignment() {
+        let source = "int main(void) { int i = 4294967298l; return i; }";
+        let ast = parse_and_validate(source).expect("initializer conversion should validate");
+        let body = function_body(&ast);
+
+        let init = match body.first() {
+            Some(BlockItem::D(Declaration::VarDecl(crate::parse::VariableDeclaration(
+                _,
+                Some(init),
+                Type::Int,
+                _
+            )))) => init,
+            _ => panic!("expected int variable declaration with initializer")
+        };
+
+        assert!(matches!(init, Expression::Cast(Type::Int, _, Type::Int)));
+    }
+
+    #[test]
+    fn cast_expression_tracks_target_type_after_validation() {
+        let source = "long f(int i) { return (long)i; }";
+        let ast = parse_and_validate(source).expect("cast should validate");
+        let body = function_body(&ast);
+
+        let returned = match body.first() {
+            Some(BlockItem::S(Statement::Return(expression))) => expression,
+            _ => panic!("expected return statement")
+        };
+
+        assert!(matches!(returned, Expression::Cast(Type::Long, _, Type::Long)));
     }
 }

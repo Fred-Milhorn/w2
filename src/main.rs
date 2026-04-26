@@ -4,8 +4,8 @@
 //!
 //! # Summary
 //!
-//! Given one C file on the command line, create an x86 executable. GCC is doing the
-//! work of preprocessing and compiling the x86 assembly language. All the lexing, parsing,
+//! Given one C file on the command line, create a macOS executable. GCC is doing the
+//! work of preprocessing and compiling the generated assembly language. All the lexing, parsing,
 //! and assembly language creation is done by this program, w2.
 //!
 //! # Explaination
@@ -51,24 +51,29 @@ fn usage(msg: &str) -> ! {
 #[rustfmt::skip]
 fn main() -> Result<()> {
     let mut opts = Opts::default();
+    let args = env::args().skip(1).collect::<Vec<_>>();
+    let mut index = 0;
 
-    for option in env::args().skip(1) {
-        if option.starts_with("-") {
-            match option.trim_start_matches('-') {
-                "debug"    | "d" => opts.debug    = true,
-                "lex"      | "l" => opts.lex      = true,
-                "parse"    | "p" => opts.parse    = true,
-                "validate" | "v" => opts.validate = true,
-                "tacky"    | "t" => opts.tacky    = true,
-                "codegen"  | "g" => opts.codegen  = true,
-                "emitcode" | "e" => opts.emitcode = true,
-                // Keep gcc-compatible `-c` semantics for object-file output.
-                "compile"  | "m" | "c" => opts.compile  = true,
-                unknown => usage(&format!("Unknown option: {unknown:?}")),
-            }
-        } else {
+    while index < args.len() {
+        let option = &args[index];
+        if !option.starts_with("-") {
             opts.files.push(option.into());
+            index += 1;
+            continue;
         }
+
+        match option.trim_start_matches('-') {
+            "debug"    | "d" => opts.debug    = true,
+            "lex"      | "l" => opts.lex      = true,
+            "parse"    | "p" => opts.parse    = true,
+            "validate" | "v" => opts.validate = true,
+            "tacky"    | "t" => opts.tacky    = true,
+            "codegen"  | "g" => opts.codegen  = true,
+            "emitcode" | "e" => opts.emitcode = true,
+            "compile"  | "m" | "c" => opts.compile  = true,
+            unknown => usage(&format!("Unknown option: {unknown:?}")),
+        }
+        index += 1;
     }
 
     if opts.debug {
@@ -128,24 +133,23 @@ fn run(opts: &Opts, file: &PathBuf) -> Result<()> {
         process::exit(0);
     }
 
-    let code = code::generate(&tacky)?;
+    let assembly = code::generate(&tacky)?;
     if opts.debug {
-        println!("code: {:?}\n", code);
+        println!("code: {:?}\n", assembly);
     }
     if opts.codegen {
         process::exit(0);
     }
-
-    let assembly = code::emit(&code)?;
+    let code = code::emit(&assembly)?;
     if opts.debug {
-        println!("assembly:\n{assembly}\n");
+        println!("assembly:\n{code}\n");
     }
     if opts.emitcode {
         process::exit(0);
     }
 
     let file_s = file_i.with_extension("s");
-    fs::write(&file_s, &assembly)?;
+    fs::write(&file_s, &code)?;
 
     if opts.compile {
         utils::create_object_file(&file_s)?;
