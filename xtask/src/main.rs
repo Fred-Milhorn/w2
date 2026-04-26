@@ -12,7 +12,6 @@ struct TestOptions {
     chapter:       Option<String>,
     stage:         Option<String>,
     latest_only:   bool,
-    target:        Option<String>,
     failfast:      bool,
     backtrace:     bool,
     verbose:       u8,
@@ -45,7 +44,6 @@ fn print_test_help() {
            -h, --help       Show this help message\n\
            -v, --verbose    Enable verbose mode (repeat for more detail)\n\
            --latest-only    Run tests for the selected chapter only\n\
-           --target T       Pass backend target to compiler under test (x86_64|arm64)\n\
            -d, --debug      Pass --debug to compiler under test\n\
            -f, --failfast   Stop on first test failure\n\
            -b, --backtrace  Force RUST_BACKTRACE=1 while running harness\n\
@@ -299,21 +297,6 @@ fn parse_test_args(raw_args: &[String]) -> TaskResult<(TestOptions, bool)> {
                 opts.latest_only = true;
                 ix += 1;
             },
-            "--target" => {
-                if ix + 1 >= raw_args.len() || raw_args[ix + 1].starts_with('-') {
-                    return Err("target is required".to_string());
-                }
-                opts.target = Some(raw_args[ix + 1].clone());
-                ix += 2;
-            },
-            value if value.starts_with("--target=") => {
-                let target = value.trim_start_matches("--target=").to_string();
-                if target.is_empty() {
-                    return Err("target is required".to_string());
-                }
-                opts.target = Some(target);
-                ix += 1;
-            },
             "-f" | "--failfast" => {
                 opts.failfast = true;
                 ix += 1;
@@ -471,10 +454,6 @@ fn run_test(raw_args: &[String]) -> TaskResult<i32> {
     }
     if opts.backtrace {
         command.env("RUST_BACKTRACE", "1");
-    }
-    if let Some(target) = opts.target.take() {
-        opts.compiler_args.push("--target".to_string());
-        opts.compiler_args.push(target);
     }
     if opts.debug {
         opts.compiler_args.push("--debug".to_string());

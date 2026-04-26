@@ -68,8 +68,7 @@ struct PortableOptions {
     extra_credit: bool,
     increment:    bool,
     goto:         bool,
-    switch:       bool,
-    target:       Option<String>
+    switch:       bool
 }
 
 #[derive(Debug, Deserialize)]
@@ -178,7 +177,6 @@ fn print_help() {
            -h, --help         Show this help message\n\
            -v, --verbose      Enable verbose output (repeat for more detail)\n\
            --latest-only      Run tests for selected chapter only\n\
-           --target T         Pass backend target to compiler under test (x86_64|arm64)\n\
            -f, --failfast     Stop on first test failure\n\
            -b, --backtrace    Force RUST_BACKTRACE=1 for compiler invocations\n\
            --extra-credit     Include all extra-credit tests\n\
@@ -188,16 +186,6 @@ fn print_help() {
            -c, --chapter N    Chapter to run (required; max 10)\n\
            -s, --stage S      Stage: lex|parse|validate|tacky|codegen|run (default run)"
     );
-}
-
-fn parse_target_arch(target: &str) -> TaskResult<&'static str> {
-    match target.trim().to_ascii_lowercase().as_str() {
-        "x86_64" | "x86-64" | "amd64" => Ok("x86_64"),
-        "arm64" | "aarch64" => Ok("arm64"),
-        _ => Err(format!(
-            "Invalid target {target:?}. Expected one of: x86_64, x86-64, amd64, arm64, aarch64"
-        ))
-    }
 }
 
 fn parse_args(raw_args: &[String]) -> TaskResult<(PortableOptions, bool)> {
@@ -217,21 +205,6 @@ fn parse_args(raw_args: &[String]) -> TaskResult<(PortableOptions, bool)> {
             },
             "--latest-only" => {
                 opts.latest_only = true;
-                ix += 1;
-            },
-            "--target" => {
-                if ix + 1 >= raw_args.len() || raw_args[ix + 1].starts_with('-') {
-                    return Err("target is required".to_string());
-                }
-                opts.target = Some(raw_args[ix + 1].clone());
-                ix += 2;
-            },
-            value if value.starts_with("--target=") => {
-                let value = value.trim_start_matches("--target=").to_string();
-                if value.is_empty() {
-                    return Err("target is required".to_string());
-                }
-                opts.target = Some(value);
                 ix += 1;
             },
             "-f" | "--failfast" => {
@@ -339,10 +312,6 @@ fn load_data(opts: &PortableOptions) -> TaskResult<HarnessData> {
             "test-portable currently supports chapters 1 through 10. Got chapter {chapter}. \
              See README.md section \"Portable Harness Scope\" for details."
         ));
-    }
-
-    if let Some(target) = &opts.target {
-        let _ = parse_target_arch(target)?;
     }
 
     let root = repo_root()?;
@@ -550,9 +519,6 @@ fn compiler_invocation(
         command.env("RUST_BACKTRACE", "1");
     }
 
-    if let Some(target) = &opts.target {
-        command.arg("--target").arg(target);
-    }
     if let Some(stage_flag) = stage.as_flag() {
         command.arg(stage_flag);
     }
@@ -690,11 +656,12 @@ fn run_library_case(
     let executable = file_under_test.with_extension("");
 
     let mut command = Command::new("gcc");
-    if let Some(target) = &opts.target {
-        let arch = parse_target_arch(target)?;
-        command.arg("-arch").arg(arch);
-    }
-    command.arg("-D").arg("SUPPRESS_WARNINGS").arg(&compiled_file);
+    command
+        .arg("-arch")
+        .arg("x86_64")
+        .arg("-D")
+        .arg("SUPPRESS_WARNINGS")
+        .arg(&compiled_file);
     for source in other_files {
         command.arg(source);
     }
@@ -884,11 +851,9 @@ pub fn run(raw_args: &[String]) -> TaskResult<i32> {
             summary.skipped,
             started.elapsed().as_secs_f64()
         );
-        let target = opts.target.as_deref().unwrap_or("host");
         println!(
-            "portable metadata: stage={} target={} skipped_by_filters={}",
+            "portable metadata: stage={} skipped_by_filters={}",
             stage.as_name(),
-            target,
             summary.skipped
         );
     } else {
@@ -908,7 +873,7 @@ pub fn run(raw_args: &[String]) -> TaskResult<i32> {
 
 #[cfg(test)]
 mod tests {
-    use super::{PortableOptions, Stage, enabled_extra_credit, parse_target_arch, props_key};
+    use super::{PortableOptions, Stage, enabled_extra_credit, props_key};
     use std::path::Path;
 
     #[test]
@@ -919,14 +884,6 @@ mod tests {
         assert!(matches!(Stage::parse("tacky"), Ok(Stage::Tacky)));
         assert!(matches!(Stage::parse("codegen"), Ok(Stage::Codegen)));
         assert!(matches!(Stage::parse("run"), Ok(Stage::Run)));
-    }
-
-    #[test]
-    fn target_parser_accepts_aliases() {
-        assert_eq!(parse_target_arch("x86_64").expect("x86_64"), "x86_64");
-        assert_eq!(parse_target_arch("amd64").expect("amd64"), "x86_64");
-        assert_eq!(parse_target_arch("arm64").expect("arm64"), "arm64");
-        assert_eq!(parse_target_arch("aarch64").expect("aarch64"), "arm64");
     }
 
     #[test]

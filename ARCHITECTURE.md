@@ -42,7 +42,7 @@ flowchart LR
    class A,B,C,D,D1,D2,D3,E,F1,F2,F3,F4,G,H,I,J phase;
    class Preprocessing,Validation,Codegen sub;
 ```
-Optional flags (`--lex`, `--parse`, `--validate`, `--tacky`, `--codegen`, `--emitcode`, `--compile`) allow early termination; `--target x86_64|arm64` selects backend (default host arch); `--debug` prints the artifact of each finished phase.
+Optional flags (`--lex`, `--parse`, `--validate`, `--tacky`, `--codegen`, `--emitcode`, `--compile`) allow early termination; `--debug` prints the artifact of each finished phase.
 
 ---
 ## 2. Supported C Subset
@@ -65,8 +65,6 @@ Not yet supported: pointers, arrays, structs, enums, floats, initializer lists, 
 | `convert.rs` | Type promotion / implicit cast helpers and static initializer evaluation. |
 | `tacky.rs` | Generates TAC (Tacky IR) from validated AST; introduces temporaries, control‑flow labels, lowers high‑level constructs. Adds static variable definitions from symbol table. |
 | `code.rs` | x86‑64 backend: assembly IR generation + fixups + stack layout + Mach‑O text emission. |
-| `arm64.rs` | arm64 backend: stack-slot assignment + AArch64 lowering + Mach‑O text emission. |
-| `target.rs` | Target selection (`x86_64`/`arm64`) and host-arch detection. |
 | `utils.rs` | GCC subprocess helpers (preprocess, assemble/link), temp/label name generation, mini counter. |
 | `main.rs` | CLI driver orchestrating phases and flag‑controlled early exits. |
 
@@ -177,11 +175,7 @@ Tacky is still typed (via symbol table) but does not encode types directly in in
 
 ---
 ## 9. Backend Overview
-`w2` supports two backend targets on macOS:
-- `x86_64`: implemented in `code.rs` (existing assembly IR + fixup passes).
-- `arm64`: implemented in `arm64.rs` (AArch64 lowering with stack-slot addressing helpers).
-
-Backend selection is done by `--target x86_64|arm64` in `main.rs`; when omitted, host architecture is used.
+`w2` targets macOS `x86_64`, implemented in `code.rs` via the existing assembly IR and fixup passes.
 
 ## 10. Assembly IR (`code.rs`, x86_64 backend)
 ### IR Layers
@@ -270,7 +264,7 @@ Flag processing sets boolean stage gates. For each input file:
 7. Emit assembly → optional exit
 8. Assemble+link (`--compile` chooses object vs executable)
 `--debug` prints each artifact struct/enum debug representation.
-`--target` controls backend selection; if omitted, `main.rs` infers host architecture.
+`main.rs` always lowers through the x86_64 backend.
 
 ---
 ## 18. Testing Harness

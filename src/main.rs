@@ -22,16 +22,13 @@ use std::fs;
 use std::path::PathBuf;
 use std::process;
 
-mod arm64;
 mod code;
 mod convert;
 mod lex;
 mod parse;
 mod tacky;
-mod target;
 mod utils;
 mod validate;
-use target::Target;
 
 #[derive(Debug, Default)]
 struct Opts {
@@ -43,7 +40,6 @@ struct Opts {
     codegen:  bool,
     emitcode: bool,
     compile:  bool,
-    target:   Option<Target>,
     files:    Vec<PathBuf>
 }
 
@@ -66,12 +62,6 @@ fn main() -> Result<()> {
             continue;
         }
 
-        if let Some(target) = option.strip_prefix("--target=") {
-            opts.target = Some(Target::parse(target)?);
-            index += 1;
-            continue;
-        }
-
         match option.trim_start_matches('-') {
             "debug"    | "d" => opts.debug    = true,
             "lex"      | "l" => opts.lex      = true,
@@ -81,20 +71,10 @@ fn main() -> Result<()> {
             "codegen"  | "g" => opts.codegen  = true,
             "emitcode" | "e" => opts.emitcode = true,
             "compile"  | "m" | "c" => opts.compile  = true,
-            "target" => {
-                if index + 1 >= args.len() {
-                    usage("Missing value for --target");
-                }
-                opts.target = Some(Target::parse(&args[index + 1])?);
-                index += 1;
-            },
             unknown => usage(&format!("Unknown option: {unknown:?}")),
         }
         index += 1;
     }
-
-    let target = opts.target.unwrap_or(Target::host()?);
-    opts.target = Some(target);
 
     if opts.debug {
         println!("{opts:?}");
@@ -105,20 +85,20 @@ fn main() -> Result<()> {
     }
 
     for file in &opts.files {
-        run(&opts, file, target)?;
+        run(&opts, file)?;
     }
 
     Ok(())
 }
 
-fn run(opts: &Opts, file: &PathBuf, target: Target) -> Result<()> {
+fn run(opts: &Opts, file: &PathBuf) -> Result<()> {
     if let Some(extension) = file.extension()
         && extension != "c"
     {
         bail!("Expected C source file: {file:?}");
     }
 
-    let file_i = utils::preprocess(file, target)?;
+    let file_i = utils::preprocess(file)?;
     let source = fs::read_to_string(&file_i)?;
 
     let tokens = lex::lex(&source)?;
@@ -153,28 +133,14 @@ fn run(opts: &Opts, file: &PathBuf, target: Target) -> Result<()> {
         process::exit(0);
     }
 
-    let code = match target {
-        Target::X86_64 => {
-            let code = code::generate(&tacky)?;
-            if opts.debug {
-                println!("code: {:?}\n", code);
-            }
-            if opts.codegen {
-                process::exit(0);
-            }
-            code::emit(&code)?
-        },
-        Target::Arm64 => {
-            let code = arm64::generate(&tacky)?;
-            if opts.debug {
-                println!("code: {:?}\n", code);
-            }
-            if opts.codegen {
-                process::exit(0);
-            }
-            arm64::emit(&code)?
-        }
-    };
+    let assembly = code::generate(&tacky)?;
+    if opts.debug {
+        println!("code: {:?}\n", assembly);
+    }
+    if opts.codegen {
+        process::exit(0);
+    }
+    let code = code::emit(&assembly)?;
     if opts.debug {
         println!("assembly:\n{code}\n");
     }
@@ -186,9 +152,9 @@ fn run(opts: &Opts, file: &PathBuf, target: Target) -> Result<()> {
     fs::write(&file_s, &code)?;
 
     if opts.compile {
-        utils::create_object_file(&file_s, target)?;
+        utils::create_object_file(&file_s)?;
     } else {
-        utils::create_executable(&file_s, target)?;
+        utils::create_executable(&file_s)?;
     }
 
     Ok(())
